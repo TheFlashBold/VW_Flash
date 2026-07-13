@@ -91,7 +91,6 @@ parser.add_argument(
         "flash_unlock",
         "get_ecu_info",
         "get_dtcs",
-        "write_vin",
         "log",
     ],
     required=True,
@@ -170,10 +169,6 @@ parser.add_argument(
 
 parser.add_argument(
     "--ble_name", help="Pass a custom device name for the BLEISOTP adapter"
-)
-
-parser.add_argument(
-    "--vin", type=str, help="New VIN for write_vin action (17 characters)", required=False
 )
 
 parser.add_argument(
@@ -512,58 +507,6 @@ elif args.action == "get_dtcs":
     [t.write(str(dtc) + " : " + dtcs[dtc]) for dtc in dtcs]
 
     t.close()
-
-elif args.action == "write_vin":
-    if not args.vin:
-        new_vin = input("Enter new VIN (17 characters): ").strip().upper()
-    else:
-        new_vin = args.vin.strip().upper()
-
-    if len(new_vin) != 17:
-        print(f"Error: VIN must be exactly 17 characters, got {len(new_vin)}")
-        exit(1)
-
-    t = tqdm.tqdm(
-        total=100,
-        colour="green",
-        ncols=round(shutil.get_terminal_size().columns * 0.75),
-    )
-
-    def wrap_callback_function(flasher_step, flasher_status, flasher_progress):
-        callback_function(t, flasher_step, flasher_status, float(flasher_progress))
-
-    # Read current VIN first
-    ecu_info = flash_uds.read_ecu_data(
-        flash_info, interface=args.interface, callback=wrap_callback_function
-    )
-    t.close()
-
-    current_vin = ecu_info.get("VIN", "unknown")
-    print(f"\nCurrent VIN: {current_vin}")
-    print(f"New VIN:     {new_vin}")
-    confirm = input("\nProceed? (yes/no): ").strip().lower()
-    if confirm != "yes":
-        print("Aborted.")
-        exit(0)
-
-    t = tqdm.tqdm(
-        total=100,
-        colour="green",
-        ncols=round(shutil.get_terminal_size().columns * 0.75),
-    )
-
-    def wrap_callback_function2(flasher_step, flasher_status, flasher_progress):
-        callback_function(t, flasher_step, flasher_status, float(flasher_progress))
-
-    result = flash_uds.write_vin(
-        flash_info, new_vin, interface=args.interface, callback=wrap_callback_function2
-    )
-    t.close()
-
-    if result["success"]:
-        print(f"\nVIN changed: {result['old_vin']} → {result['new_vin']}")
-    else:
-        print(f"\nVIN write FAILED. Readback: {result['new_vin']}")
 
 elif args.action == "log":
     logger = hsl_logger(

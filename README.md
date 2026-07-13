@@ -24,6 +24,14 @@ Prebuilt releases for Windows are available at : https://github.com/bri3d/VW_Fla
 
 [docs/cli.md](docs/cli.md) contains documentation about the command line interface VW_Flash. 
 
+## macOS Build
+
+A prebuilt macOS app bundle is available from the GitHub release:
+
+[Download VW_Flash_GUI for macOS (Apple Silicon)](https://github.com/TheFlashBold/VW_Flash/releases/download/v0.7.3-macos.1/VW_Flash_GUI-macos-arm64.zip)
+
+Unzip the archive and open `VW_Flash_GUI.app`. The app stores its GUI configuration and logs in `~/Library/Application Support/VW_Flash`.
+
 # Supported Interface Hardware
 
 * Macchina A0 with BridgeLEG firmware, via J2534: https://github.com/Switchleg1/esp32-isotp-ble-bridge 
@@ -110,4 +118,3 @@ The CBOOT splits the erase of blocks 1 (CBOOT) and 2 (ASW) into two half-block p
 | 0x800132b2 | `flash_erase_with_prefix` | Block erase with 0x7F prefix |
 | 0x8001382e | `uds_erase_validate_completion` | Polls 2-phase erase completion |
 | 0x8001351c | `flash_block_dispatch` | Full block handler with switch(1-11) |
-

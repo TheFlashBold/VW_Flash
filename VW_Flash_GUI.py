@@ -81,15 +81,26 @@ sys.excepthook = handle_exception
 threading.excepthook = handle_threaded_exception
 
 try:
-    currentPath = path.dirname(path.abspath(__file__))
+    currentPath = getattr(sys, "_MEIPASS", path.dirname(path.abspath(__file__)))
 except NameError:  # We are the main py2exe script, not a module
     currentPath = path.dirname(path.abspath(sys.argv[0]))
+
+if sys.platform == "darwin":
+    appDataPath = path.join(
+        path.expanduser("~"), "Library", "Application Support", "VW_Flash"
+    )
+else:
+    appDataPath = currentPath
+configPath = path.join(appDataPath, "gui_config.json")
+logPath = path.join(appDataPath, "logs")
+os.makedirs(logPath, exist_ok=True)
+os.chdir(appDataPath)
 
 logging.config.fileConfig(path.join(currentPath, "logging.conf"))
 
 
 def write_config(paths):
-    with open("gui_config.json", "w") as config_file:
+    with open(configPath, "w") as config_file:
         json.dump(paths, config_file)
 
 
@@ -270,51 +281,6 @@ class StminDialog(wx.Dialog):
             self.Close()
 
 
-class VINDialog(wx.Dialog):
-    def __init__(self, parent, title, current_vin=""):
-        super(VINDialog, self).__init__(parent, title=title, size=(400, 150))
-        panel = wx.Panel(self)
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        button_sizer = wx.BoxSizer(wx.HORIZONTAL)
-
-        if current_vin:
-            sizer.Add(
-                wx.StaticText(panel, label=f"Current VIN: {current_vin}"),
-                flag=wx.ALL,
-                border=5,
-            )
-
-        sizer.Add(wx.StaticText(panel, label="New VIN (17 characters):"), flag=wx.LEFT | wx.TOP, border=5)
-        self.vin_input = wx.TextCtrl(panel, value="", style=wx.TE_PROCESS_ENTER)
-        self.vin_input.SetMaxLength(17)
-        sizer.Add(self.vin_input, flag=wx.EXPAND | wx.LEFT | wx.RIGHT, border=5)
-
-        self.ok_btn = wx.Button(panel, wx.ID_OK, label="Write VIN")
-        self.cancel_btn = wx.Button(panel, wx.ID_CANCEL, label="Cancel")
-        button_sizer.Add(self.ok_btn)
-        button_sizer.Add(self.cancel_btn, flag=wx.LEFT, border=5)
-        sizer.Add(button_sizer, flag=wx.ALIGN_CENTER | wx.TOP | wx.BOTTOM, border=10)
-
-        panel.SetSizer(sizer)
-        self.ok_btn.Bind(wx.EVT_BUTTON, self.on_button)
-        self.cancel_btn.Bind(wx.EVT_BUTTON, self.on_button)
-        self.vin_input.Bind(wx.EVT_TEXT_ENTER, self.on_button)
-
-    def on_button(self, event):
-        if self.IsModal():
-            if event.EventObject.Id == wx.ID_OK or event.GetEventType() == wx.wxEVT_TEXT_ENTER:
-                vin = self.vin_input.GetValue().strip().upper()
-                if len(vin) != 17:
-                    wx.MessageBox("VIN must be exactly 17 characters.", "Invalid VIN", wx.OK | wx.ICON_WARNING)
-                    return
-                self.vin_value = vin
-                self.EndModal(wx.ID_OK)
-            else:
-                self.EndModal(wx.ID_CANCEL)
-        else:
-            self.Close()
-
-
 class FlashPanel(wx.Panel):
     input_blocks: dict[str, constants.BlockData]
 
@@ -322,7 +288,7 @@ class FlashPanel(wx.Panel):
         super().__init__(parent)
 
         try:
-            with open("gui_config.json", "r") as config_file:
+            with open(configPath, "r") as config_file:
                 self.options = json.load(config_file)
         except (FileNotFoundError, json.JSONDecodeError):
             logger.warning("Configuration was missing or invalid. Creating...")
@@ -330,7 +296,7 @@ class FlashPanel(wx.Panel):
                 "cal": "",
                 "flashpack": "",
                 "bins": "",
-                "logger": path.join(currentPath, "logs"),
+                "logger": logPath,
                 "interface": "",
                 "singlecsv": False,
                 "scanble": False,
@@ -418,13 +384,9 @@ class FlashPanel(wx.Panel):
         get_info_button = wx.Button(self, label="Get Ecu Info")
         get_info_button.Bind(wx.EVT_BUTTON, self.on_get_info)
 
-        vin_button = wx.Button(self, label="Write VIN")
-        vin_button.Bind(wx.EVT_BUTTON, self.on_write_vin)
-
         actions_sizer.Add(self.module_choice, 0, wx.LEFT, 5)
         actions_sizer.Add(get_info_button, 0, wx.LEFT | wx.RIGHT, 5)
         actions_sizer.Add(dtc_button, 0, wx.RIGHT, 5)
-        actions_sizer.Add(vin_button, 0, wx.RIGHT, 5)
 
         selections_sizer.Add(self.action_choice, 0, wx.EXPAND | wx.ALL, 5)
         selections_sizer.Add(flash_button, 0, wx.EXPAND | wx.ALL, 5)
@@ -490,68 +452,6 @@ class FlashPanel(wx.Panel):
             self.feedback_text.AppendText(str(dtc) + " : " + dtcs[dtc] + "\n")
             for dtc in dtcs
         ]
-
-    def on_write_vin(self, event):
-        (interface, interface_path) = split_interface_name(self.options["interface"])
-
-        # First read current VIN
-        self.feedback_text.AppendText("Reading current VIN...\n")
-        try:
-            ecu_info = flash_uds.read_ecu_data(
-                self.flash_info,
-                interface=interface,
-                callback=self.update_callback,
-                interface_path=interface_path,
-            )
-            current_vin = ecu_info.get("VIN", "")
-        except Exception as e:
-            current_vin = ""
-            self.feedback_text.AppendText(f"Could not read current VIN: {e}\n")
-
-        dlg = VINDialog(self, "Write VIN", current_vin)
-        result = dlg.ShowModal()
-        if result != wx.ID_OK:
-            dlg.Destroy()
-            return
-
-        new_vin = dlg.vin_value
-        dlg.Destroy()
-
-        confirm = wx.MessageDialog(
-            self,
-            f"Current VIN: {current_vin or '(unknown)'}\nNew VIN: {new_vin}\n\nAre you sure?",
-            "Confirm VIN Change",
-            wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
-        ).ShowModal()
-
-        if confirm != wx.ID_YES:
-            self.feedback_text.AppendText("VIN write cancelled.\n")
-            return
-
-        self.feedback_text.AppendText(f"Writing VIN: {new_vin} (Extended Session + SA2 Level 0x11)...\n")
-
-        def write_vin_thread():
-            try:
-                result = flash_uds.write_vin(
-                    self.flash_info,
-                    new_vin,
-                    interface=interface,
-                    callback=self.update_callback,
-                    interface_path=interface_path,
-                )
-                wx.CallAfter(
-                    self.feedback_text.AppendText,
-                    f"VIN write {'successful' if result['success'] else 'FAILED'}: {result['old_vin']} → {result['new_vin']}\n",
-                )
-            except Exception as e:
-                wx.CallAfter(
-                    self.feedback_text.AppendText,
-                    f"VIN write failed: {e}\n",
-                )
-
-        t = threading.Thread(target=write_vin_thread)
-        t.daemon = True
-        t.start()
 
     def flash_unlock(self, selected_file):
         if (
@@ -1309,4 +1209,6 @@ class VW_Flash_Frame(wx.Frame):
 if __name__ == "__main__":
     app = wx.App(False)
     frame = VW_Flash_Frame()
+    app.SetTopWindow(frame)
+    app.frame = frame
     app.MainLoop()

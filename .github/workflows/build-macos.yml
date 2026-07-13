@@ -1,0 +1,105 @@
+name: VW_Flash macOS Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*-macos*"
+    paths:
+      - ".github/workflows/build-macos.yml"
+      - "VW_Flash.py"
+      - "VW_Flash_GUI.py"
+      - "VW_Flash_GUI.spec"
+      - "lib/**"
+      - "data/**"
+      - "docs/**"
+      - "logs/**"
+      - "requirements.txt"
+      - "pyproject.toml"
+      - "uv.lock"
+  pull_request:
+    paths:
+      - ".github/workflows/build-macos.yml"
+      - "VW_Flash.py"
+      - "VW_Flash_GUI.py"
+      - "VW_Flash_GUI.spec"
+      - "lib/**"
+      - "data/**"
+      - "docs/**"
+      - "logs/**"
+      - "requirements.txt"
+      - "pyproject.toml"
+      - "uv.lock"
+
+jobs:
+  build:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            arch: x86_64
+          - os: macos-14
+            arch: arm64
+
+    env:
+      PYINSTALLER_CONFIG_DIR: ${{ github.workspace }}/.pyinstaller-cache
+      COPYFILE_DISABLE: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build native LZSS helper
+        run: |
+          make -B -C lib/lzss
+          test -x lib/lzss/lzss
+
+      - name: Smoke-test imports and LZSS helper
+        run: |
+          python -m compileall VW_Flash.py VW_Flash_GUI.py lib
+          python - <<'PY'
+          from lib import lzss_helper
+
+          output = lzss_helper.lzss_compress(b"vw_flash_ci_smoke")
+          if not output:
+              raise SystemExit("LZSS helper produced no output")
+          PY
+
+      - name: Build VW_Flash GUI
+        run: pyinstaller --clean --noconfirm VW_Flash_GUI.spec
+
+      - name: Package macOS app
+        run: |
+          mkdir -p release
+          test -d dist/VW_Flash_GUI.app
+          (cd dist && zip -r -y "../release/VW_Flash_GUI-macos-${{ matrix.arch }}.zip" VW_Flash_GUI.app)
+          unzip -l "release/VW_Flash_GUI-macos-${{ matrix.arch }}.zip" | grep "VW_Flash_GUI.app/Contents/MacOS/VW_Flash_GUI"
+          if unzip -l "release/VW_Flash_GUI-macos-${{ matrix.arch }}.zip" | grep -E '/\._|\.DS_Store'; then
+            echo "Unexpected macOS metadata file in app zip"
+            exit 1
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VW_Flash_GUI-macos-${{ matrix.arch }}
+          path: release/*.zip
+          if-no-files-found: error

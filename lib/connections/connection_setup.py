@@ -5,11 +5,6 @@ from .fake_connection import FakeConnection
 
 from typing import Optional
 
-try:
-    from .j2534_connection import J2534Connection
-except Exception as e:
-    print(e)
-
 from lib import constants
 
 
@@ -43,6 +38,11 @@ def connection_setup(
         conn = IsoTPSocketConnection(can_interface, rxid=rxid, txid=txid, params=params)
         conn.tpsock.set_opts(txpad=0x55, tx_stmin=st_min)
     elif interface == "J2534":
+        try:
+            from .j2534_connection import J2534Connection
+        except ImportError as exc:
+            raise RuntimeError("J2534 support is not available on this platform") from exc
+
         if interface_path:
             conn = J2534Connection(
                 windll=interface_path,

@@ -14,17 +14,19 @@ endif
 ifeq ($(OS),Windows)
 	EXE = .exe
 	DEL = del
+	OBJS = lzss.o getopt.o
 else	#assume Linux/Unix
 	EXE =
 	DEL = rm
+	OBJS = lzss.o
 endif
 
 all:		lzss$(EXE)
 
-lzss$(EXE):	lzss.o getopt.o
+lzss$(EXE):	$(OBJS)
 		$(LD) $^ $(LDFLAGS) $@
 
-lzss.o:		lzss.c getopt.h
+lzss.o:		lzss.c
 		$(CC) $(CFLAGS) $<
 
 getopt.o:	getopt.c getopt.h
