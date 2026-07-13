@@ -62,5 +62,7 @@ if is_macos:
         bundle_identifier='com.vwflash.gui',
         info_plist={
             'NSHighResolutionCapable': 'True',
+            'NSBluetoothAlwaysUsageDescription': 'VW_Flash uses Bluetooth to connect to Macchina A0 and ESP32 diagnostic adapters.',
+            'NSBluetoothPeripheralUsageDescription': 'VW_Flash uses Bluetooth to connect to Macchina A0 and ESP32 diagnostic adapters.',
         },
     )

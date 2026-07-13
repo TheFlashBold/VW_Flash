@@ -90,9 +90,9 @@ jobs:
         run: |
           mkdir -p release
           test -d dist/VW_Flash_GUI.app
-          (cd dist && zip -r -y "../release/VW_Flash_GUI-macos-${{ matrix.arch }}.zip" VW_Flash_GUI.app)
+          ditto --norsrc --noextattr --noqtn -c -k --keepParent dist/VW_Flash_GUI.app "release/VW_Flash_GUI-macos-${{ matrix.arch }}.zip"
           unzip -l "release/VW_Flash_GUI-macos-${{ matrix.arch }}.zip" | grep "VW_Flash_GUI.app/Contents/MacOS/VW_Flash_GUI"
-          if unzip -l "release/VW_Flash_GUI-macos-${{ matrix.arch }}.zip" | grep -E '/\._|\.DS_Store'; then
+          if unzip -l "release/VW_Flash_GUI-macos-${{ matrix.arch }}.zip" | grep -E '(^|/)\._|__MACOSX|\.DS_Store'; then
             echo "Unexpected macOS metadata file in app zip"
             exit 1
           fi
