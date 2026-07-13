@@ -28,7 +28,9 @@ Prebuilt releases for Windows are available at : https://github.com/bri3d/VW_Fla
 
 A prebuilt macOS app bundle is available from the GitHub release:
 
-[Download VW_Flash_GUI for macOS (Apple Silicon)](https://github.com/TheFlashBold/VW_Flash/releases/download/v0.7.3-macos.1/VW_Flash_GUI-macos-arm64.zip)
+[Download VW_Flash_GUI for macOS (Apple Silicon)](https://github.com/TheFlashBold/VW_Flash/releases/download/v0.7.3-macos.2/VW_Flash_GUI-macos-arm64.zip)
+
+The macOS app is signed and notarized with Apple Developer ID.
 
 Unzip the archive and open `VW_Flash_GUI.app`. The app stores its GUI configuration and logs in `~/Library/Application Support/VW_Flash`.
 
