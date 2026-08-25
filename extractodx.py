@@ -12,6 +12,7 @@ from lib.modules import (
     simos18,
     simos1810,
     simos184,
+    dq200mqb,
     dq250mqb,
     dq400mqb,
     dq500_0bh,
@@ -118,10 +119,10 @@ def extract_odx(odx_string, flash_info: constants.FlashInfo, is_dsg=False):
             decompressedContent = decryptedContent
         elif compressionType == "A" or compressionType == "a":
             decompressedContent = decompress_raw_lzss10(decryptedContent, length)
-        elif compressionType == "1":
-            decompressedContent = legacysimos.decompress(decryptedContent)
         elif is_dsg:
             decompressedContent = decompress_raw_lzss10(decryptedContent, length)
+        elif compressionType == "1":
+            decompressedContent = legacysimos.decompress(decryptedContent)
         else:
             decompressedContent = decryptedContent
 
@@ -189,6 +190,13 @@ if __name__ == "__main__":
         help="(optional) use DSG decryption algorithm",
     )
     parser.add_argument(
+        "--dq200",
+        dest="dq200",
+        action="store_true",
+        default=False,
+        help="(optional) use DQ200 MQB DSG decryption algorithm",
+    )
+    parser.add_argument(
         "--dq381",
         dest="dq381",
         action="store_true",
@@ -241,6 +249,8 @@ if __name__ == "__main__":
         flash_info = simos8.s8_flash_info
     if args.dq381:
         flash_info = dq381.dsg_flash_info
+    if args.dq200:
+        flash_info = dq200mqb.dsg_flash_info
     if args.dsg:
         flash_info = dq250mqb.dsg_flash_info
     if args.dq400:
@@ -250,7 +260,14 @@ if __name__ == "__main__":
     if args.dq500_0dl:
         flash_info = dq500_0dl.dsg_flash_info
 
-    is_dsg = args.dsg or args.dq381 or args.dq400 or args.dq500 or args.dq500_0dl
+    is_dsg = (
+        args.dsg
+        or args.dq200
+        or args.dq381
+        or args.dq400
+        or args.dq500
+        or args.dq500_0dl
+    )
     file_data = Path(args.file).read_text()
 
     (data_blocks, allowed_boxcodes) = extract_odx(file_data, flash_info, is_dsg)
