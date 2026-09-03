@@ -6,12 +6,55 @@ from . import constants
 
 logger = logging.getLogger("Checksum")
 
+DRIVER_SIGNATURES = {
+    bytes.fromhex("00002EA2"),  # DQ250 and later DQ200 driver
+    bytes.fromhex("0100009D"),  # early DQ200 MQB driver
+}
+
+
+def jamcrc32(data_binary: bytes) -> int:
+    """Return the reflected CRC-32 used by DQ200/DQ250 (no final XOR)."""
+    return 0xFFFFFFFF - zlib.crc32(data_binary)
+
+
+def driver_crc32(data_binary: bytes) -> int:
+    """CRC32 supplied externally in UDS routine 0x0202 for the RAM Driver."""
+    return zlib.crc32(data_binary) & 0xFFFFFFFF
+
+
+def validate_driver(data_binary: bytes):
+    """Validate the CBOOT-checked Driver magic; its CRC is not stored in-file."""
+    if len(data_binary) < 4:
+        logger.error("DSG Driver is shorter than its 4-byte signature")
+        return (constants.ChecksumState.FAILED_ACTION, data_binary)
+
+    signature = bytes(data_binary[:4])
+    checksum = driver_crc32(data_binary)
+    if signature not in DRIVER_SIGNATURES:
+        logger.error(
+            "Unknown DSG Driver signature %s (external CRC32 %08X)",
+            signature.hex().upper(),
+            checksum,
+        )
+        return (constants.ChecksumState.INVALID_CHECKSUM, data_binary)
+
+    logger.info(
+        "Driver signature %s is valid; external CRC32 = %08X",
+        signature.hex().upper(),
+        checksum,
+    )
+    return (constants.ChecksumState.VALID_CHECKSUM, data_binary)
+
 
 def validate(
     data_binary: bytes,
     blocknum: int = 3,
     should_fix=False,
 ):
+    if len(data_binary) < 4:
+        logger.error("DSG checksum block is shorter than its 4-byte checksum")
+        return (constants.ChecksumState.FAILED_ACTION, data_binary)
+
     checksum_location = len(data_binary) - 4
 
     current_checksum = struct.unpack(
@@ -23,7 +66,7 @@ def validate(
     # The CRC checksum algorithm used in DSG is JAMCRC - the "NOT" of CRC32
     # We can't use the normal ~ NOT operation because it will produce a signed int.
 
-    checksum = int("0b" + "1" * 32, 2) - zlib.crc32(checksum_data)
+    checksum = jamcrc32(checksum_data)
 
     logger.debug("Checksum = " + hex(checksum))
 

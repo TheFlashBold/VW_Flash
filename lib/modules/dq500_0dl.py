@@ -36,7 +36,7 @@ sa2_script_dsg = bytes.fromhex(
     "6806814A05876B5F7DD5494C"
 )
 
-block_names_frf_dsg = {1: "FD_01", 2: "FD_02", 3: "FD_03"}
+block_names_frf_dsg = {1: "FD_01DATA", 2: "FD_02DATA", 3: "FD_03DATA"}
 
 dsg_binfile_offsets = {
     1: 0x10200,   # CBOOT/DRIVER

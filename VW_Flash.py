@@ -30,6 +30,7 @@ from lib.modules import (
     simos18,
     simos1810,
     simos184,
+    dq200mqb,
     dq250mqb,
     dq381,
     dq400mqb,
@@ -116,6 +117,7 @@ parser.add_argument(
 )
 
 parser.add_argument("--dsg", help="Perform MQB-DQ250 DSG actions.", action="store_true")
+parser.add_argument("--dq200", help="Perform MQB-DQ200 DSG actions.", action="store_true")
 parser.add_argument("--dq381", help="Perform DQ381 flash actions.", action="store_true")
 parser.add_argument("--dq400", help="Perform DQ400 DSG actions.", action="store_true")
 parser.add_argument("--dq500", help="Perform DQ500-0BH DSG actions.", action="store_true")
@@ -211,6 +213,9 @@ if args.simos16:
 if args.dsg:
     flash_info = dq250mqb.dsg_flash_info
 
+if args.dq200:
+    flash_info = dq200mqb.dsg_flash_info
+
 if args.haldex:
     flash_info = haldex4motion.haldex_flash_info
 
@@ -228,7 +233,7 @@ if args.dq500_0dl:
 
 flash_utils = simos_flash_utils
 
-if args.dsg or args.dq400 or args.dq500 or args.dq500_0dl:
+if args.dsg or args.dq200 or args.dq400 or args.dq500 or args.dq500_0dl:
     flash_utils = dsg_flash_utils
 
 if args.dq381:
@@ -271,7 +276,7 @@ if args.interface == "USBISOTP":
 
 def input_blocks_from_frf(frf_path: str) -> dict[str, BlockData]:
     frf_data = Path(frf_path).read_bytes()
-    is_dsg = args.dsg or args.dq381 or args.dq400 or args.dq500
+    is_dsg = args.dsg or args.dq200 or args.dq381 or args.dq400 or args.dq500
     # Handle ZIP-wrapped FRFs
     import io, zipfile
     if frf_data[:2] == b'PK':

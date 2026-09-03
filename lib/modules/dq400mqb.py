@@ -23,7 +23,7 @@ block_checksums_dsg = {
 
 block_lengths_dsg = {
     2: 0xC00,  # DRIVER (3072 bytes)
-    3: 0x107651,  # ASW (1078865 bytes)
+    3: 0x116ABD,  # ASW (1141437 bytes) - 0DD300040_1602; was 0x107651 (older SW)
     4: 0x40000,  # CAL (262144 bytes)
 }
 
@@ -32,13 +32,20 @@ dsg_sa2_script = bytes.fromhex(
 )
 block_names_frf_dsg = {2: "FD_2", 3: "FD_3", 4: "FD_4"}
 
+# Flash base is 0x80000000 (TriCore internal flash, 2.5 MB).
+# Layout verified against a DQ400e bench full backup (int_flash.bin, 0DD300045H):
+#   0x00000000-0x00040000  boot/CBOOT (protected, not in FRF)
+#   0x00040000-0x00080000  CAL   (block 0x51) -- FD_4 content matches byte-exact @0x40000
+#   0x00080000-...         ASW   (block 0x50) -- dense code region @0x80000
+# DRIVER (block 0x30) is a RAM-loaded flash driver (full of 0xd4xxxx DSPR refs),
+# not persistent flash; kept at 0x0 only so the binfile round-trips.
 dsg_binfile_offsets = {
-    2: 0x0,  # DRIVER
-    3: 0x40000,  # ASW (at 0x80040000 in flash, but after DRIVER+CAL)
-    4: 0x0,  # CAL (at 0x80040000 in flash)
+    2: 0x0,       # DRIVER  - RAM flash driver, not stored in main flash
+    3: 0x80000,   # ASW     @ flash 0x80080000
+    4: 0x40000,   # CAL     @ flash 0x80040000
 }
 
-dsg_binfile_size = 0x280000  # 2.5 MB internal flash
+dsg_binfile_size = 0x280000  # 2.5 MB internal flash (base 0x80000000)
 
 dsg_project_name = "F"
 

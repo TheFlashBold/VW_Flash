@@ -23,22 +23,22 @@ block_checksums_dsg = {
 
 block_lengths_dsg = {
     2: 0x80E,  # DRIVER
-    3: 0x130000,  # ASW
+    3: 0x130000,  # Maximum ASW size; early 06/09 generations use 0x100000
     4: 0x20000,  # CAL
 }
 
 dsg_sa2_script = bytes.fromhex(
     "68028149680593A55A55AA4A0587810595268249845AA5AA558703F780384C"
 )
-block_names_frf_dsg = {2: "DB_2", 3: "DB_3", 4: "DB_4"}
+block_names_frf_dsg = {2: "FD_2", 3: "FD_3", 4: "FD_4"}
 
 dsg_binfile_offsets = {
     2: 0x0,  # DRIVER
-    3: 0x20000,  # ASW
-    4: 0x0,  # CAL-only extracts use DB_4 directly.
+    3: 0x40000,  # ASW in the resident-micro layout
+    4: 0x20000,  # CAL in the resident-micro layout
 }
 
-dsg_binfile_size = 0x150010
+dsg_binfile_size = 0x2A0000  # 2.75 MB full flash image (0x00-padded past ASW)
 
 dsg_project_name = "F"
 

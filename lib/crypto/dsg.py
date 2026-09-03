@@ -9,8 +9,13 @@ from lib.constants import internal_path
 
 
 class DSG(CryptoInterface):
+    def __init__(self, key_name: str = "mqb_dsg_key.bin"):
+        # Newer DQ200 (0CW) mechatronic gen uses a different 256-byte table:
+        # pass key_name="mqb_dsg_key_gen2.bin". Default = original DQ250/DQ200 table.
+        self.key_name = key_name
+
     def decrypt(self, data: bytes):
-        dsg_key = internal_path("data", "mqb_dsg_key.bin")
+        dsg_key = internal_path("data", self.key_name)
         dsg_key_bytes = pathlib.Path(dsg_key).read_bytes()
         counter = 0
         offset = 0
@@ -29,7 +34,7 @@ class DSG(CryptoInterface):
         return bytes(output_data)
 
     def encrypt(self, data: bytes):
-        dsg_key = internal_path("data", "mqb_dsg_key.bin")
+        dsg_key = internal_path("data", self.key_name)
         dsg_key_bytes = pathlib.Path(dsg_key).read_bytes()
         counter = 0
         offset = 0

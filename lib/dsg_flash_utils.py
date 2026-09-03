@@ -4,7 +4,6 @@ from . import lzss_helper as lzss
 from . import dsg_checksum as dsg_checksum
 from . import constants as constants
 from . import flash_uds
-from .modules import dq250mqb
 from .constants import BlockData, FlashInfo, PreparedBlockData
 
 from typing import Optional
@@ -47,8 +46,14 @@ def checksum_blocks(
                 flasher_progress=40,
             )
 
-        # Block 2 (Driver) has a different checksum mechanism - it is sent externally.
-        if blocknum != 2:
+        # Driver CRC32 is sent externally and its CBOOT-checked magic is in the
+        # first four bytes. ASW/CAL carry an internal JAMCRC in their last four.
+        if blocknum == 2:
+            (result, corrected_file) = dsg_checksum.validate_driver(binary_data)
+            if result != constants.ChecksumState.VALID_CHECKSUM:
+                cliLogger.critical("Invalid DSG Driver signature")
+                continue
+        else:
             (result, corrected_file) = dsg_checksum.validate(
                 data_binary=binary_data,
                 blocknum=blocknum,
@@ -58,9 +63,6 @@ def checksum_blocks(
                 cliLogger.critical("Failure to checksum and/or save file CRC32!")
                 continue
             cliLogger.info("File CRC32 checksum is valid.")
-        else:
-            corrected_file = binary_data
-
         output_blocks[filename] = BlockData(blocknum, corrected_file, blockname)
     return output_blocks
 
@@ -82,11 +84,8 @@ def prepare_blocks(flash_info: constants.FlashInfo, input_blocks: dict, callback
         binary_data = block.block_bytes
         blocknum = block.block_number
         try:
-            boxcode = binary_data[
-                dq250mqb.box_code_location_dsg[blocknum][
-                    0
-                ] : dq250mqb.box_code_location_dsg[blocknum][1]
-            ].decode()
+            boxcode_location = flash_info.box_code_location[blocknum]
+            boxcode = binary_data[boxcode_location[0] : boxcode_location[1]].decode()
 
         except:
             boxcode = "-"
@@ -122,6 +121,10 @@ def prepare_blocks(flash_info: constants.FlashInfo, input_blocks: dict, callback
         else:
             should_erase = False
 
+        uds_checksum = flash_info.block_checksums[blocknum]
+        if blocknum == 2:
+            uds_checksum = dsg_checksum.driver_crc32(binary_data).to_bytes(4, "big")
+
         output_blocks[filename] = PreparedBlockData(
             blocknum,
             flash_info.crypto.encrypt(compressed_binary),
@@ -129,7 +132,7 @@ def prepare_blocks(flash_info: constants.FlashInfo, input_blocks: dict, callback
             0x1,
             0x1,
             should_erase,
-            flash_info.block_checksums[blocknum],
+            uds_checksum,
             block.block_name,
         )
 
@@ -144,7 +147,13 @@ def checksum(flash_info, input_blocks):
 
         cliLogger.info("Checksumming: " + filename + " as block: " + str(blocknum))
 
-        (result, _) = dsg_checksum.validate(data_binary=binary_data, blocknum=blocknum)
+        if blocknum == 2:
+            (result, _) = dsg_checksum.validate_driver(binary_data)
+            cliLogger.info(
+                "Driver external CRC32: %08X", dsg_checksum.driver_crc32(binary_data)
+            )
+        else:
+            (result, _) = dsg_checksum.validate(data_binary=binary_data, blocknum=blocknum)
 
         if result == constants.ChecksumState.VALID_CHECKSUM:
             cliLogger.info("Checksum on file was valid")
@@ -166,11 +175,15 @@ def checksum_fix(flash_info: FlashInfo, input_blocks: dict[str, BlockData]):
             "Fixing Checksum for: " + filename + " as block: " + str(blocknum)
         )
 
-        (result, data) = dsg_checksum.validate(
-            data_binary=binary_data,
-            blocknum=blocknum,
-            should_fix=True,
-        )
+        if blocknum == 2:
+            data = binary_data
+            (result, _) = dsg_checksum.validate_driver(binary_data)
+        else:
+            (result, data) = dsg_checksum.validate(
+                data_binary=binary_data,
+                blocknum=blocknum,
+                should_fix=True,
+            )
 
         if result == constants.ChecksumState.FAILED_ACTION:
             cliLogger.info("Checksum correction failed")
