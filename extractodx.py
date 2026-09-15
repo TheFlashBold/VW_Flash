@@ -20,6 +20,7 @@ from lib.modules import (
     simos16,
     simos122,
     dq381,
+    edc17c64,
 )
 
 
@@ -224,6 +225,13 @@ if __name__ == "__main__":
         default=False,
         help="(optional) use DQ500-0DL DSG (AES encrypted)",
     )
+    parser.add_argument(
+        "--edc17c64",
+        dest="edc17c64",
+        action="store_true",
+        default=False,
+        help="(optional) use Bosch EDC17C64 (04L906021*) newer ODX-F: LZSS10 + repeating-XOR",
+    )
 
     parser.add_argument(
         "--outdir",
@@ -259,6 +267,8 @@ if __name__ == "__main__":
         flash_info = dq500_0bh.dsg_flash_info
     if args.dq500_0dl:
         flash_info = dq500_0dl.dsg_flash_info
+    if args.edc17c64:
+        flash_info = edc17c64.edc17c64_flash_info
 
     is_dsg = (
         args.dsg

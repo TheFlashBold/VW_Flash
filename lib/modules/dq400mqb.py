@@ -30,6 +30,12 @@ block_lengths_dsg = {
 dsg_sa2_script = bytes.fromhex(
     "68028149680593A55A55AA4A0587810595268249845AA5AA558703F780574C"
 )
+# FLASHDATA SHORT-NAMEs as emitted for SW-part-numbered (0DD300xxx) FRFs; the
+# flash/binfile path keys input_blocks by these. NOTE: spare-part-numbered
+# (0DD906556xxx) FRFs use verbose names (FD_30ERASEPROGRROUTI / FD_50FLASHDATA /
+# FD_51FLASHDATA) for the SAME blocks, so name matching is not portable across
+# both families -- unpack_dsg_frf.py resolves blocks by DATABLOCK
+# SOURCE-START-ADDRESS (0x30/0x50/0x51) instead, which is stable across both.
 block_names_frf_dsg = {2: "FD_2", 3: "FD_3", 4: "FD_4"}
 
 # Flash base is 0x80000000 (TriCore internal flash, 2.5 MB).
