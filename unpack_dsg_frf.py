@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from extractodx import extract_odx                     # noqa: E402
 from frf.decryptfrf import decrypt_data, read_key_material  # noqa: E402
 from lib.modules import (  # noqa: E402
-    dq200mqb, dq250mqb, dq381, dq400mqb, dq500_0bh, dq500_0dl, dl501, vl381,
+    dq200mqb, dq250mqb, dq381, dq400mqb, dq500_0bh, dq500_0dl, dl501, vl381, dl382,
 )
 
 MODULES = {
@@ -52,6 +52,7 @@ MODULES = {
     "dq200": dq200mqb,
     "dl501": dl501,
     "vl381": vl381,
+    "dl382": dl382,
 }
 
 # Some families ship multiple crypto keys across SW eras. When a block fails to
