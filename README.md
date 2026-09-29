@@ -2,7 +2,7 @@
 
 VW Flashing Tools over ISO-TP / UDS
 
-Currently supports full custom reflashing of the Continental/Siemens Simos18.1/6, and Simos18.10 control units as used in MQB VW AG vehicles, as well as the Temic DQ250-MQB, Bosch DQ381-MQB DSG, DQ400-MQB DSG, DQ500-0BH DSG, DQ500-0DL DSG, and Gen 5 Haldex4Motion control units over UDS.
+Currently supports full custom reflashing of the Continental/Siemens Simos18.1/6, and Simos18.10 control units as used in MQB VW AG vehicles, as well as the Temic DQ250-MQB, Bosch DQ381-MQB DSG, DQ400-MQB DSG, DQ500-0BH DSG, DQ500-0DL DSG, Continental DL382 (0CK) DSG, and Gen 5 Haldex4Motion control units over UDS.
 
 RSA-bypass/"unlock" patches are provided for Simos 18.1/6 (SC8 project identifier) and Simos18.10 (SCG project identifier). 
 
@@ -10,10 +10,11 @@ Additionally supports reflashing of several other Simos ECUs provided that RSA v
 
 # Changes to original VW_Flash
 
-- **DQ381 full flash support**: Reverse engineered the Renesas SH-2A CBOOT firmware to identify and fix the "CAL ONLY" limitation. The ECU's 2-phase block erase now completes reliably via erase retries.
-- **DQ500-0DL support**: Added AES-128-CBC decryption/encryption module for RS3/TTRS/RSQ3 DSG transmissions. Keys extracted from CBOOT bench dump.
-- **DQ500-0BH support**: Added unencrypted/uncompressed flash support for Tiguan/Passat/Q3 DSG.
-- **DQ400-MQB support**: Added rolling substitution cipher decryption with key table extracted from CBOOT via Ghidra.
+- **Additional DSG transmissions**: Full flash support for DQ381-MQB, DQ400-MQB, DQ500-0BH, DQ500-0DL, DL382 (0CK), DL501 (0B5) and VL381 (0AW), alongside the original DQ250-MQB.
+- **DL382 (0CK)**: Added the Continental/Temic DL382 mechatronic (`--dl382`) — unencrypted, LZSS10-compressed flash blocks with SA2 seed/key and per-block CRC-32.
+- **ZF 8HP / Haldex**: Added AL551 and AL991 (ZF 8HP) and Gen 5 Haldex4Motion support.
+- **Additional engine ECUs**: Added Bosch EDC17, EDC17C64, MED17.5 and MED17.5.2 modules.
+- **macOS build**: Signed and notarized VW_Flash_GUI app bundle for Apple Silicon.
 - **extractodx.py**: Fixed decompression for unencrypted DSG containers (compressionType='0' check before LZSS10 fallback).
 
 # Use Information and Documentation
@@ -78,45 +79,59 @@ Pull Requests are welcome and appreciated. I will review them as I have time. Co
 
 The `lib/lzss` directory contains an implementation of LZSS modified to use the correction dictionary size and window length for Simos18 ECUs. Thanks to `tinytuning` for this.
 
-# DSG Transmission Support
+# Supported ECUs
 
-## Supported DSG ECUs
+Each ECU family is a module in [lib/modules](lib/modules) selected by a matching CLI flag. Encryption/compression describe the flash-container format the tool handles for that ECU.
 
-| ECU | Encryption | Compression | Full Flash | Notes |
-|-----|-----------|-------------|------------|-------|
-| DQ250-MQB | Rolling substitution cipher | LZSS10 | Yes | 256-byte key table |
-| DQ381-MQB | AES-128-CBC | LZSS10 | Yes | Renesas SH-2A CBOOT |
-| DQ400-MQB | Rolling substitution cipher | LZSS10 | Yes | Different key table than DQ250 |
-| DQ500-0BH | None | None | Yes | Unencrypted, uncompressed |
-| DQ500-0DL | AES-128-CBC | LZSS10 | Yes | RS3/TTRS/RSQ3 |
+## Engine (Simos / Bosch)
 
-## DQ381/DQ500-0DL CBOOT Architecture (Renesas SH-2A)
+| ECU | Flag | Encryption | Notes |
+|-----|------|-----------|-------|
+| Simos 8 / 8.5 | `--simos8` | XOR | S85 |
+| Simos 10 | `--simos10` | XOR | SA |
+| Simos 12 | `--simos12` | AES-128-CBC | SC1 |
+| Simos 12.2 | `--simos122` | AES-128-CBC | SC2 |
+| Simos 16 | `--simos16` | AES-128-CBC | SG1 |
+| Simos 18.1/18.6 | `--simos18` | AES-128-CBC | SC8, unlock patch available |
+| Simos 18.10 | `--simos1810` | AES-128-CBC | SCG, unlock patch available |
+| Simos 18.41 | `--simos184` | AES-128-CBC | SCB |
+| Bosch EDC17 | `--edc17` | Plaintext | generic EDC17 |
+| Bosch EDC17C64 | `--edc17c64` | container | |
+| Bosch MED17.5 | `--med175` | Plaintext | keyless CRC-32 integrity |
+| Bosch MED17.5.2 | `--med1752` | Plaintext | |
 
-The DQ381 and DQ500-0DL ECUs use a **Renesas SH-2A** processor (Big Endian), not TriCore like Simos ECUs. The CBOOT firmware was reverse engineered to understand and fix the "CAL ONLY" flash limitation reported in [Issue #135](https://github.com/bri3d/VW_Flash/issues/135).
+## Transmissions (DSG / auto / AWD)
 
-### Root Cause: 2-Phase Block Erase
+| ECU | Flag | Encryption | Compression | Notes |
+|-----|------|-----------|-------------|-------|
+| DQ250-MQB | `--dsg` | Rolling substitution cipher | LZSS10 | 256-byte key table |
+| DQ200-MQB | `--dq200` | Rolling substitution cipher | LZSS10 | |
+| DQ381-MQB | `--dq381` | AES-128-CBC | LZSS10 | Renesas SH-2A |
+| DQ400-MQB | `--dq400` | Rolling substitution cipher | LZSS10 | different key table than DQ250 |
+| DQ500-0BH | `--dq500` | None | None | Tiguan/Passat/Q3 |
+| DQ500-0DL | `--dq500_0dl` | AES-128-CBC | LZSS10 | RS3/TTRS/RSQ3 |
+| DL382 (0CK) | `--dl382` | None | LZSS10 (blocks 1/2) | Continental SH-2A, `EV_TCMDL382021` |
+| DL501 (0B5) | — | Substitution cipher | LZSS10 | Audi longitudinal 7-speed |
+| VL381 (0AW) | — | Substitution cipher | LZSS10 | Audi multitronic CVT |
+| AL551 (ZF 8HP) | — | — | — | S-Tronic / Tiptronic |
+| AL991 (0C8) | — | Plaintext | — | ZF 8HP |
+| Haldex 4Motion | `--unsafe_haldex` | — | — | Gen 5 |
 
-The CBOOT splits the erase of blocks 1 (CBOOT) and 2 (ASW) into two half-block phases internally (`flash_erase_cboot_split` at 0x80013470). Between phases, the ECU returns a negative response code (NRC), which VW_Flash previously interpreted as a fatal error.
+Unlock ("RSA-bypass") patches are provided for Simos 18.1/18.6 (SC8) and Simos 18.10 (SCG). Other Simos ECUs can be reflashed provided RSA validation (if present) has already been disabled.
 
-**Block erase dispatch (0x80013992):**
+## DL382 (0CK) — Continental/Temic
 
-| Block | Method | Details |
-|-------|--------|---------|
-| 1 (CBOOT) | `flash_erase_single_block` | Split into 2 halves, async busy flags |
-| 2 (ASW) | `flash_erase_with_prefix` | 0x7F prefix byte, similar 2-phase |
-| 3 (CAL) | Function pointer (direct) | Single-phase, no split — always worked |
-| 4-6 | Erase-only variants | Used for erase without data transfer |
+The DL382 `0CK` mechatronic is a Renesas SH-2A unit that identifies as `EV_TCMDL382021` — **not** the TriCore TC1784 "DL382" (Audi longitudinal, `8W_927155`), which is a separate ECU. Flash blocks are **not encrypted** and carry no RSA signature; the two large blocks are LZSS10-compressed, the two small ones stored plain. Invoke with `--dl382` (module `lib/modules/dl382.py`).
 
-**Fix:** The erase routine in `flash_uds.py` now retries on NRC responses when `flash_info.erase_retries` is set (default 5 for DQ381/DQ500-0DL), allowing the multi-phase erase to complete across retries.
+**Security access (UDS 0x27, SA2 script):** `6802814993A55A55AA4A05878105952668058249845AA5AA558703F78013` (a second SW variant ends the final EOR with `03F74321`).
 
-### Key CBOOT Functions (Ghidra SH-2A analysis)
+**Flash blocks** (block id = ODX source-start-address):
 
-| Address | Name | Purpose |
-|---------|------|---------|
-| 0x80013914 | `uds_service_dispatcher` | Routes UDS service requests |
-| 0x80013992 | `block_dispatcher` | Block number switch (1-6) |
-| 0x80013470 | `flash_erase_cboot_split` | Splits block into 2 halves for erase |
-| 0x80013278 | `flash_erase_single_block` | Single block erase via descriptor table |
-| 0x800132b2 | `flash_erase_with_prefix` | Block erase with 0x7F prefix |
-| 0x8001382e | `uds_erase_validate_completion` | Polls 2-phase erase completion |
-| 0x8001351c | `flash_block_dispatch` | Full block handler with switch(1-11) |
+| id | block | length | compression |
+|----|-------|--------|-------------|
+| 1 | DB_01 (ASW+CAL) | 0x1C0000 | LZSS10 |
+| 2 | DB_02 | 0x40000 | LZSS10 |
+| 3 | DB_03 | 0x8000 | none |
+| 4 | DB_04 | 0x20000 | none |
+
+**Block integrity:** each DATA block is verified by CRC-32 (4 bytes, over the uncompressed data). The ECU checks it via `RoutineControl 0x31 01 0202 <blockId>` after `RequestTransferExit`; a mismatch rejects the block. Like DQ381, the SH-2A bootloader performs a multi-phase block erase, so `erase_retries=5` is set.

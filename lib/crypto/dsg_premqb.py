@@ -25,8 +25,20 @@ from lib.constants import internal_path
 #     v0698x3402ec getriebe DSG MP8x F93S  <->  02E300057A_9334.bin
 # via a 49184-byte plaintext 0x00 run (gives kroll) + offset propagation
 # (gives ksub); self-decrypts that block 100% (720896/720896).
+#
+# Table "C" (oldest 02E generation, ASW at 0x8000 len 0x68000; families
+# 0690/0696/0697 + low revisions of 0691/0698/0699) uses a DIFFERENT
+# algorithm: a byte-stream cipher chained on the ciphertext two bytes back
+# and the previous plaintext byte (no roll counter):
+#     encrypt:  cipher[i] = E[p[i]] + cipher[i-2] + R[p[i-1]]
+#     decrypt:  p[i]      = Einv[(cipher[i] - cipher[i-2] - R[p[i-1]]) & 0xFF]
+# with IV cipher[-2]=0x6E, cipher[-1]=0xFF, p[-1]=0.  ksub_C holds Einv,
+# kroll_C holds R (both 256-byte permutations).  Recovered from the exact
+# pair v0698Y0402ea VO8Y .sgo <-> "00784 aidan" 0x70000 dump (ASW @0x8000);
+# decrypts that block byte-exact (425984/425984).
 
 ROLL_INC = 0x167
+TABLE_C_IV = (0x6E, 0xFF)  # cipher[-2], cipher[-1]
 
 
 class DSGPreMQB:
@@ -37,8 +49,11 @@ class DSGPreMQB:
         self.kroll = list(
             pathlib.Path(internal_path("data", f"dq250_premqb_dsg_kroll_{table}.bin")).read_bytes()
         )
+        self.table = table
 
     def decrypt(self, data: bytes) -> bytes:
+        if self.table == "C":
+            return self._decrypt_c(data)
         ksub, kroll = self.ksub, self.kroll
         off = 0
         last = 0
@@ -49,5 +64,17 @@ class DSGPreMQB:
             p = ksub[(data[i] + off) & 0xFF]
             out[i] = p
             off = (off - p - last + kroll[(roll >> 8) & 0xFF]) & 0xFF
+            last = p
+        return bytes(out)
+
+    def _decrypt_c(self, data: bytes) -> bytes:
+        einv, r = self.ksub, self.kroll
+        c2, c1 = TABLE_C_IV
+        last = 0
+        out = bytearray(len(data))
+        for i, c in enumerate(data):
+            p = einv[(c - c2 - r[last]) & 0xFF]
+            out[i] = p
+            c2, c1 = c1, c
             last = p
         return bytes(out)

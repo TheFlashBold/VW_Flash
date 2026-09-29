@@ -99,7 +99,7 @@ def find_boxcode(image: bytes) -> str:
     return m.group().decode().rstrip() if m else None
 
 
-TABLES = ("A", "B")  # A = later 02E generation, B = older (low-revision) firmware
+TABLES = ("A", "B", "C")  # A = later 02E generation, B = older (low-revision), C = oldest (ASW @0x8000)
 
 
 def _assemble(blocks, cipher):
@@ -110,9 +110,8 @@ def _assemble(blocks, cipher):
     return bytes(image)
 
 
-def unpack(path: str, table: str = None):
-    """Decrypt an SGO into a flat image.  With ``table=None`` (default), each
-    per-platform key table is tried until the output looks like DSG firmware."""
+def unpack_ex(path: str, table: str = None):
+    """Like ``unpack`` but returns ``(image, table, blocks)``."""
     data = _raw(path)
     if data[:16] != MAGIC:
         raise ValueError(f"not an SGML Object File: {path}")
@@ -120,8 +119,27 @@ def unpack(path: str, table: str = None):
     for t in (table,) if table else TABLES:
         image = _assemble(blocks, DSGPreMQB(t))
         if table or looks_decoded(image):
-            return image
-    return image  # last attempt; caller checks looks_decoded()
+            return image, t, blocks
+    return image, t, blocks  # last attempt; caller checks looks_decoded()
+
+
+def unpack(path: str, table: str = None):
+    """Decrypt an SGO into a flat image.  With ``table=None`` (default), each
+    per-platform key table is tried until the output looks like DSG firmware."""
+    return unpack_ex(path, table)[0]
+
+
+def old_version_label(verstr: str) -> str:
+    """Table-C (oldest) builds carry no FxxS/Exx marker: ``v0696F1402ea`` =
+    family 6, variant ``F``, revision ``14`` -> label ``F14``."""
+    m = re.match(r"v069\w(\w)(\d{2})02e[ac]", verstr)
+    return m.group(1) + m.group(2) if m else version_label(verstr)
+
+
+def dsg_code(verstr: str) -> str:
+    """Build code after ``DSG_`` (e.g. ``RG7P``), used to disambiguate names."""
+    m = re.search(r"DSG[_-](\w+)", verstr)
+    return m.group(1) if m else "x"
 
 
 def looks_decoded(image: bytes) -> bool:
@@ -143,9 +161,10 @@ def main(argv):
         files = argv[2:]
     os.makedirs(out_dir, exist_ok=True)
     ok = bad = 0
+    written = {}  # Table-C name -> (version string, image) for -par/-sw merging
     for f in files:
         try:
-            image = unpack(f)
+            image, table, blocks = unpack_ex(f)
         except Exception as e:  # noqa: BLE001
             print(f"SKIP {os.path.basename(f)}: {e}")
             bad += 1
@@ -155,8 +174,25 @@ def main(argv):
             bad += 1
             continue
         box = find_boxcode(image)
-        label = version_label(image_version(image))
-        name = f"{box}_{label}.bin" if box else f"{label}_{os.path.basename(f)}.bin"
+        verstr = image_version(image)
+        if table == "C":
+            # -sw (ASW 0x8000..0x70000) and -par (CAL 0x68000..0x70000) of
+            # the same build are merged into one image; different builds
+            # sharing box+label get the DSG build code appended.
+            label = old_version_label(verstr)
+            name = f"{box}_{label}.bin" if box else f"{label}_{os.path.basename(f)}.bin"
+            prev = written.get(name)
+            if prev and prev[0] == verstr:
+                merged = bytearray(prev[1])
+                for _btype, addr, length, _payload in blocks:
+                    merged[addr : addr + length] = image[addr : addr + length]
+                image = bytes(merged)
+            elif prev:
+                name = name[:-4] + f"_{dsg_code(verstr)}.bin"
+            written[name] = (verstr, image)
+        else:
+            label = version_label(verstr)
+            name = f"{box}_{label}.bin" if box else f"{label}_{os.path.basename(f)}.bin"
         open(os.path.join(out_dir, name), "wb").write(image)
         print(f"OK   {name:28} <- {os.path.basename(f)}")
         ok += 1

@@ -33,6 +33,7 @@ from lib.modules import (
     dq200mqb,
     dq250mqb,
     dq381,
+    dl382,
     dq400mqb,
     dq500_0bh,
     dq500_0dl,
@@ -119,6 +120,7 @@ parser.add_argument(
 parser.add_argument("--dsg", help="Perform MQB-DQ250 DSG actions.", action="store_true")
 parser.add_argument("--dq200", help="Perform MQB-DQ200 DSG actions.", action="store_true")
 parser.add_argument("--dq381", help="Perform DQ381 flash actions.", action="store_true")
+parser.add_argument("--dl382", help="Perform DL382 (0CK Conti/SH-2A) flash actions.", action="store_true")
 parser.add_argument("--dq400", help="Perform DQ400 DSG actions.", action="store_true")
 parser.add_argument("--dq500", help="Perform DQ500-0BH DSG actions.", action="store_true")
 parser.add_argument("--dq500_0dl", help="Perform DQ500-0DL DSG actions.", action="store_true")
@@ -222,6 +224,9 @@ if args.haldex:
 if args.dq381:
     flash_info = dq381.dsg_flash_info
 
+if args.dl382:
+    flash_info = dl382.dsg_flash_info
+
 if args.dq400:
     flash_info = dq400mqb.dsg_flash_info
 
@@ -236,7 +241,7 @@ flash_utils = simos_flash_utils
 if args.dsg or args.dq200 or args.dq400 or args.dq500 or args.dq500_0dl:
     flash_utils = dsg_flash_utils
 
-if args.dq381:
+if args.dq381 or args.dl382:
     flash_utils = dq381_flash_utils
 
 if args.haldex:
@@ -276,7 +281,7 @@ if args.interface == "USBISOTP":
 
 def input_blocks_from_frf(frf_path: str) -> dict[str, BlockData]:
     frf_data = Path(frf_path).read_bytes()
-    is_dsg = args.dsg or args.dq200 or args.dq381 or args.dq400 or args.dq500
+    is_dsg = args.dsg or args.dq200 or args.dq381 or args.dl382 or args.dq400 or args.dq500
     # Handle ZIP-wrapped FRFs
     import io, zipfile
     if frf_data[:2] == b'PK':
