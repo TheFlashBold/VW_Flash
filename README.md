@@ -113,6 +113,7 @@ Each ECU family is a module in [lib/modules](lib/modules) selected by a matching
 | DL382 (0CK) | `--dl382` | None | LZSS10 (blocks 1/2) | Continental SH-2A, `EV_TCMDL382021` |
 | DL501 (0B5) | — | Substitution cipher | LZSS10 | Audi longitudinal 7-speed |
 | VL381 (0AW) | — | Substitution cipher | LZSS10 | Audi multitronic CVT |
+| VL300 (01J) | — | SGO sum-substitution cipher (T1/T2) | None | Audi multitronic CVT (C167), unpack only: `unpack_vl300_sgo.py` |
 | AL551 (ZF 8HP) | — | — | — | S-Tronic / Tiptronic |
 | AL991 (0C8) | — | Plaintext | — | ZF 8HP |
 | Haldex 4Motion | `--unsafe_haldex` | — | — | Gen 5 |
