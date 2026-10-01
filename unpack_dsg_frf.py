@@ -41,7 +41,7 @@ from extractodx import extract_odx                     # noqa: E402
 from frf.decryptfrf import decrypt_data, read_key_material  # noqa: E402
 from lib.modules import (  # noqa: E402
     dq200mqb, dq250mqb, dq381, dq400mqb, dq500_0bh, dq500_0dl, dl501, vl381, dl382,
-    al991,
+    al991, al551,
 )
 
 MODULES = {
@@ -55,6 +55,7 @@ MODULES = {
     "vl381": vl381,
     "dl382": dl382,
     "al991": al991,
+    "al551": al551,
 }
 
 # Some families ship multiple crypto keys across SW eras. When a block fails to

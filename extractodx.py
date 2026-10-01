@@ -118,6 +118,9 @@ def extract_odx(odx_string, flash_info: constants.FlashInfo, is_dsg=False):
 
         if compressionType == "0":
             decompressedContent = decryptedContent
+        elif hasattr(flash_info.crypto, "decompress"):
+            # family-specific codec (e.g. ZF AL551 LZSS 5/11)
+            decompressedContent = flash_info.crypto.decompress(decryptedContent, length)
         elif compressionType == "A" or compressionType == "a":
             decompressedContent = decompress_raw_lzss10(decryptedContent, length)
         elif is_dsg:
