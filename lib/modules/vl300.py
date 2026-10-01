@@ -7,11 +7,11 @@ from lib.crypto.vl300 import VL300
 # 4F5910156S; most other x910156 are Bosch engine SGOs, NOT VL300).
 #
 # Container: "SGML Object File" (.sgo), same layout as the pre-MQB DQ250 SGO
-# (see unpack_dsg_sgo.py). One flash block, btype 0x01, 0x008000..0x07FFFF,
+# (see lib/containers/dsg_premqb_sgo.py). One flash block, btype 0x01, 0x008000..0x07FFFF,
 # uncompressed, encrypted with the VL300 cipher (lib/crypto/vl300.py):
 #     p[i] = T[(c[i] + c[i-1]) & 0xFF],  IV c[-1] = 0xFF
 # Two table generations T1/T2 (data/vl300_sgo_T{1,2}.bin), auto-selected by
-# unpack_vl300_sgo.py. The block header carries a 16-bit checksum at +0x13
+# lib/containers/vl300_sgo.py. The block header carries a 16-bit checksum at +0x13
 # (algorithm unknown: not sum8/sum16/common CRC16 over plain- or ciphertext).
 #
 # Flat image layout (0x80000 total):
@@ -51,7 +51,7 @@ dsg_binfile_size = 0x80000
 
 dsg_project_name = "VL300"
 
-dsg_crypto = VL300("1")  # T2 for A6 4F generation; unpack_vl300_sgo.py auto-selects
+dsg_crypto = VL300("1")  # T2 for A6 4F generation; lib/containers/vl300_sgo.py auto-selects
 
 block_name_to_int = {"SW": 1}
 

@@ -8,7 +8,7 @@ import sys
 from os import path
 
 from lib import haldex_binfile
-from lib.extract_flash import extract_flash_from_frf
+from lib.extract_flash import extract_flash_from_frf, ExternContainer
 from lib.constants import (
     BlockData,
     PreparedBlockData,
@@ -37,9 +37,16 @@ from lib.modules import (
     dq400mqb,
     dq500_0bh,
     dq500_0dl,
+    dl501,
+    vl381,
     simos16,
     haldex4motion,
+    al450,
+    al551,
+    al991,
+    edc17c64,
 )
+from lib.containers import bosch, dsg_premqb_sgo, vl300_sgo, pcr21, gateway
 
 from lib.simos_hsl import hsl_logger
 import shutil
@@ -91,6 +98,7 @@ parser.add_argument(
         "flash_bin",
         "flash_frf",
         "flash_unlock",
+        "extract_frf",
         "get_ecu_info",
         "get_dtcs",
         "log",
@@ -124,6 +132,21 @@ parser.add_argument("--dl382", help="Perform DL382 (0CK Conti/SH-2A) flash actio
 parser.add_argument("--dq400", help="Perform DQ400 DSG actions.", action="store_true")
 parser.add_argument("--dq500", help="Perform DQ500-0BH DSG actions.", action="store_true")
 parser.add_argument("--dq500_0dl", help="Perform DQ500-0DL DSG actions.", action="store_true")
+parser.add_argument("--dl501", help="DL501 0B5 S tronic, extract_frf only.", action="store_true")
+parser.add_argument("--vl381", help="VL381 0AW multitronic, extract_frf only.", action="store_true")
+parser.add_argument("--al450", help="ZF 8HP AL450 (2H0927158*, Amarok), extract_frf only.", action="store_true")
+parser.add_argument("--al551", help="ZF 8HP AL551 (4G0927158*/4H1927158*), extract_frf only.", action="store_true")
+parser.add_argument("--al991", help="ZF 8HP AL991 (0C8927750*), extract_frf only.", action="store_true")
+parser.add_argument("--edc17c64", help="Bosch EDC17C64 (04L906021*), extract_frf only.", action="store_true")
+# Self-addressed containers (SGO / BCB / Aisin ODX ...): the layout comes from the
+# container itself (lib/containers), not from a FlashInfo. extract_frf only.
+parser.add_argument("--edc17", help="Bosch BCB Type1 / LZSS10 FRF, ODX or SGO (EDC17, MED17, MED9), extract_frf only.", action="store_true")
+parser.add_argument("--aisin", help="Aisin 09G/09D/09S FRF, ODX or SGO, extract_frf only.", action="store_true")
+parser.add_argument("--sgo_raw", help="Plain XOR-0xFF SGO (Marelli AMT, Siemens transfer case), extract_frf only.", action="store_true")
+parser.add_argument("--dq250_premqb", help="Pre-MQB DQ250 02E SGO, extract_frf only.", action="store_true")
+parser.add_argument("--vl300", help="VL300 01J multitronic SGO, extract_frf only.", action="store_true")
+parser.add_argument("--pcr21", help="Simos PCR2.1 (03L906023*) FRF, extract_frf only.", action="store_true")
+parser.add_argument("--gateway", help="Gateway J533 (5Q0/5QE/5WA/8P0907530*) FRF or SGO, extract_frf only.", action="store_true")
 parser.add_argument(
     "--unsafe_haldex",
     help="Perform Haldex actions, unsafe to flash modified files!",
@@ -161,6 +184,14 @@ parser.add_argument(
     "--output_bin",
     help="output a single BIN file, as used by some commercial tools",
     type=str,
+    required=False,
+)
+
+parser.add_argument(
+    "--template",
+    type=str,
+    help="extract_frf: full flash read whose bootloader/gap bytes are kept in the output bin "
+    "(default: 0x00-filled)",
     required=False,
 )
 
@@ -236,6 +267,91 @@ if args.dq500:
 if args.dq500_0dl:
     flash_info = dq500_0dl.dsg_flash_info
 
+if args.dl501:
+    flash_info = dl501.dsg_flash_info
+
+if args.vl381:
+    flash_info = vl381.dsg_flash_info
+
+# DL501/VL381 and the ZF 8HP TCUs: FRF container/codec and flat layout are
+# known, flashing is not (no SA2 script, block checksums or transfer
+# parameters) -> extract only.
+if args.edc17c64:
+    flash_info = edc17c64.edc17c64_flash_info
+
+container = None
+container_name = None
+for flag, extractor in (
+    ("edc17", lambda p, d: bosch.extract_container(p, d, bosch.CODECS_BOSCH)),
+    ("aisin", lambda p, d: bosch.extract_container(p, d, bosch.CODECS_AISIN)),
+    ("sgo_raw", lambda p, d: bosch.extract_container(p, d, bosch.CODECS_SGO_RAW)),
+    ("dq250_premqb", dsg_premqb_sgo.extract_container),
+    ("vl300", vl300_sgo.extract_container),
+    ("pcr21", pcr21.extract_container),
+    ("gateway", gateway.extract_container),
+):
+    if getattr(args, flag):
+        container, container_name = extractor, flag
+
+extract_only = (
+    args.dl501 or args.vl381 or args.al450 or args.al551 or args.al991
+    or args.edc17c64 or container is not None
+)
+is_dsg = (
+    args.dsg or args.dq200 or args.dq381 or args.dl382 or args.dq400
+    or args.dq500 or args.dq500_0dl or extract_only
+)
+
+if args.al450:
+    flash_info = al450.dsg_flash_info
+
+if args.al551:
+    flash_info = al551.dsg_flash_info
+
+if args.al991:
+    flash_info = al991.dsg_flash_info
+
+# Modules that know their checksums on the full flat image (FlashInfo
+# checksum_image / checksum_fix_image, e.g. AL551/AL450) can also check
+# (checksum) and correct (prepare --output_bin) a bin without flash support.
+image_checksum = container is None and hasattr(flash_info, "checksum_image")
+allowed_actions = ("extract_frf", "checksum", "prepare") if image_checksum else ("extract_frf",)
+if extract_only and args.action not in allowed_actions:
+    logger.critical(
+        f"{container_name or flash_info.project_name} only supports --action "
+        + " / ".join(allowed_actions)
+    )
+    exit(1)
+
+
+def log_image_checksums(image: bytes) -> bool:
+    results = flash_info.checksum_image(image)
+    for name, location, stored, calculated in results:
+        state = "OK" if stored == calculated else "INVALID"
+        logger.info(
+            f"{name}: checksum @{location:#x} stored {stored:#010x} calculated {calculated:#010x} {state}"
+        )
+    if not results:
+        logger.warning(f"no {flash_info.project_name} checksum block found")
+    return bool(results) and all(stored == calculated for _, _, stored, calculated in results)
+
+
+if extract_only and image_checksum and args.action in ("checksum", "prepare"):
+    if not args.input_bin:
+        logger.critical(f"--action {args.action} for {flash_info.project_name} needs --input_bin (full image)")
+        exit(1)
+    image = Path(args.input_bin).read_bytes()
+    if args.action == "checksum":
+        exit(0 if log_image_checksums(image) else 1)
+    if not args.output_bin:
+        logger.critical("--action prepare needs --output_bin")
+        exit(1)
+    image = flash_info.checksum_fix_image(image)
+    log_image_checksums(image)
+    Path(args.output_bin).write_bytes(image)
+    logger.info(f"Wrote {args.output_bin}")
+    exit(0)
+
 flash_utils = simos_flash_utils
 
 if args.dsg or args.dq200 or args.dq400 or args.dq500 or args.dq500_0dl:
@@ -281,18 +397,15 @@ if args.interface == "USBISOTP":
 
 def input_blocks_from_frf(frf_path: str) -> dict[str, BlockData]:
     frf_data = Path(frf_path).read_bytes()
-    is_dsg = args.dsg or args.dq200 or args.dq381 or args.dl382 or args.dq400 or args.dq500
-    # Handle ZIP-wrapped FRFs
-    import io, zipfile
-    if frf_data[:2] == b'PK':
-        zf = zipfile.ZipFile(io.BytesIO(frf_data), 'r')
-        for fi in zf.infolist():
-            with zf.open(fi) as f:
-                frf_data = f.read()
-                break
-    (flash_data, allowed_boxcodes) = extract_flash_from_frf(
-        frf_data, flash_info, is_dsg=is_dsg
-    )
+    try:
+        (flash_data, allowed_boxcodes) = extract_flash_from_frf(
+            frf_data, flash_info, is_dsg=is_dsg
+        )
+    except ExternContainer:
+        logger.critical(
+            "FRF uses the ODX-F container (newer gen); its decryption key is not available"
+        )
+        exit(1)
     input_blocks = {}
     for i in flash_info.block_names_frf.keys():
         filename = flash_info.block_names_frf[i]
@@ -314,7 +427,7 @@ if (args.infile and not args.block) or (
 if args.block:
     blocks = [int(flash_info.block_to_number(block)) for block in args.block]
 
-if args.frf:
+if args.frf and container is None:
     input_blocks = input_blocks_from_frf(args.frf)
 
 if args.input_bin:
@@ -398,6 +511,51 @@ elif args.action == "prepare":
             block_number = output_block.block_number
             file_name = filename.rstrip(".bin") + "." + output_block.block_name + ".bin"
             Path(file_name).write_bytes(binary_data)
+
+elif args.action == "extract_frf":
+    if not args.frf or not args.output_bin:
+        logger.critical("extract_frf needs --frf and --output_bin")
+        exit(1)
+    output_bin = Path(args.output_bin)
+    out_dir = output_bin if output_bin.is_dir() else None
+    if container is not None:
+        # the container carries its own layout; it also proposes the file name
+        try:
+            image, name = container(Path(args.frf), out_dir)
+        except Exception as e:
+            logger.critical(f"{Path(args.frf).name}: {e}")
+            exit(1)
+        if out_dir:
+            output_bin = out_dir / name
+        output_bin.write_bytes(image)
+        logger.info(f"Wrote {output_bin}")
+        exit(0)
+    if out_dir:
+        # FL_<boxcode>_<version>_<...>.frf -> <boxcode>_<version>.bin; separators
+        # may be '-' and dash-padded (FL-8K5927156B--0004.frf).
+        import re
+        m = re.match(r"^FL[-_]+([0-9A-Za-z]+)[-_]+([0-9A-Za-z]+)(?:[-_].*)?\.frf$",
+                     Path(args.frf).name, re.I)
+        stem = f"{m.group(1)}_{m.group(2)}" if m else Path(args.frf).stem
+        if hasattr(flash_info, "output_name"):
+            name = flash_info.output_name(stem, [b.block_bytes for b in input_blocks.values()])
+        else:
+            name = f"{stem}.bin"
+        output_bin = out_dir / name
+    base = None
+    if args.template:
+        base = Path(args.template).read_bytes()
+        if len(base) != flash_info.binfile_size:
+            logger.critical(
+                f"template is {len(base):#x} bytes, expected {flash_info.binfile_size:#x}"
+            )
+            exit(1)
+    logger.info(binfile_handler.input_block_info(input_blocks))
+    image = binfile_handler.bin_from_blocks(input_blocks, base)
+    output_bin.write_bytes(image)
+    logger.info(f"Wrote {output_bin}")
+    if image_checksum and not log_image_checksums(image):
+        logger.warning("checksum mismatch in the extracted image")
 
 elif args.action == "flash_cal":
     t = tqdm.tqdm(

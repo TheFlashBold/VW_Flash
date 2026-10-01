@@ -65,3 +65,7 @@ dsg_flash_info = FlashInfo(
     None,
     None,
 )
+
+# 0CW SW ships two substitution tables: the default "late" one and the "early"
+# one used by older SW. FRF extraction retries with these when the default fails.
+dsg_flash_info.alt_cryptos = [dq200.DQ200("early")]

@@ -95,8 +95,10 @@ Each ECU family is a module in [lib/modules](lib/modules) selected by a matching
 | Simos 18.1/18.6 | `--simos18` | AES-128-CBC | SC8, unlock patch available |
 | Simos 18.10 | `--simos1810` | AES-128-CBC | SCG, unlock patch available |
 | Simos 18.41 | `--simos184` | AES-128-CBC | SCB |
-| Bosch EDC17 | `--edc17` | Plaintext | generic EDC17 |
-| Bosch EDC17C64 | `--edc17c64` | container | |
+| Bosch EDC17 / MED17 / MED9 | `--edc17` | BCB Type1 repeating XOR / LZSS10 | extract only; FRF, ODX or SGO, layout from the container |
+| Bosch EDC17C64 | `--edc17c64` | XOR + LZSS10 (`A1`) | extract only, `--template` for the boot region |
+| Simos PCR2.1 | `--pcr21` | SimosXor + legacy LZSS | extract only, 03L906023* |
+| Gateway J533 | `--gateway` | none / LZSS10 | extract only, 5Q0/5QE/5WA/8P0907530* |
 | Bosch MED17.5 | `--med175` | Plaintext | keyless CRC-32 integrity |
 | Bosch MED17.5.2 | `--med1752` | Plaintext | |
 
@@ -111,14 +113,32 @@ Each ECU family is a module in [lib/modules](lib/modules) selected by a matching
 | DQ500-0BH | `--dq500` | None | None | Tiguan/Passat/Q3 |
 | DQ500-0DL | `--dq500_0dl` | AES-128-CBC | LZSS10 | RS3/TTRS/RSQ3 |
 | DL382 (0CK) | `--dl382` | None | LZSS10 (blocks 1/2) | Continental SH-2A, `EV_TCMDL382021` |
-| DL501 (0B5) | — | Substitution cipher | LZSS10 | Audi longitudinal 7-speed |
-| VL381 (0AW) | — | Substitution cipher | LZSS10 | Audi multitronic CVT |
-| VL300 (01J) | — | SGO sum-substitution cipher (T1/T2) | None | Audi multitronic CVT (C167), unpack only: `unpack_vl300_sgo.py` |
-| AL551 (ZF 8HP) | — | — | — | S-Tronic / Tiptronic |
-| AL991 (0C8) | — | Plaintext | — | ZF 8HP |
+| DL501 (0B5) | `--dl501` | Substitution cipher | LZSS10 | Audi longitudinal 7-speed, extract only |
+| VL381 (0AW) | `--vl381` | Substitution cipher | LZSS10 | Audi multitronic CVT, extract only |
+| VL300 (01J) | `--vl300` | SGO sum-substitution cipher (T1/T2) | None | Audi multitronic CVT (C167), extract only |
+| DQ250 pre-MQB (02E) | `--dq250_premqb` | SGO rolling cipher (tables A/B/C) | None | extract only |
+| AL450 (ZF 8HP, Amarok) | `--al450` | XOR | ZF LZSS 5/11 | extract + block CRC32 check/fix (`checksum`, `prepare`), no flashing |
+| AL551 (ZF 8HP) | `--al551` | XOR | ZF LZSS 5/11 | extract + block CRC32 check/fix (`checksum`, `prepare`), no flashing |
+| AL991 (0C8) | `--al991` | Plaintext | — | ZF 8HP, extract only |
+| Aisin 09G/09D/09S | `--aisin` | — / XOR-0xFF SGO | LZSS10 / LZMA | extract only |
+| Marelli AMT, Siemens transfer case | `--sgo_raw` | XOR-0xFF SGO | None | extract only |
 | Haldex 4Motion | `--unsafe_haldex` | — | — | Gen 5 |
 
 Unlock ("RSA-bypass") patches are provided for Simos 18.1/18.6 (SC8) and Simos 18.10 (SCG). Other Simos ECUs can be reflashed provided RSA validation (if present) has already been disabled.
+
+## FRF / SGO extraction
+
+Every family above unpacks its flash container to a flat bin with one action:
+
+```
+python3 VW_Flash.py --<family> --action extract_frf --frf <file.frf|.odx|.sgo> --output_bin <file.bin|dir/> [--template full_read.bin]
+```
+
+With a directory as `--output_bin` the file is named after the box code and version
+(plus EPK / ASW id where the family has one). `--template` keeps the bytes the
+container does not carry (bootloader, gaps) from a full read of the same hardware.
+Families with fixed block layouts use their `lib/modules` FlashInfo; self-addressed
+containers (SGO, BCB, Aisin, PCR2.1, gateway) live in `lib/containers`.
 
 ## DL382 (0CK) — Continental/Temic
 

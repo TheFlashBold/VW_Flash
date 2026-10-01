@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-"""Unpack pre-MQB DQ250 (02E, Temic) DSG ``.sgo`` firmware files.
+"""Pre-MQB DQ250 (02E, Temic) DSG ``.sgo`` containers (formerly unpack_dsg_sgo.py).
+Used by VW_Flash.py --dq250_premqb --action extract_frf.
 
 Pre-MQB DSG software ships as "SGML Object File" containers (magic
 ``SGML Object File``) rather than the ODX/FRF used by MQB (0D9) boxes.  Each
@@ -11,16 +11,10 @@ This tool parses the container, decrypts every block with the pre-MQB cipher,
 lays the decrypted blocks at their flash addresses into a flat image, and names
 the result ``<boxcode>_<version>.bin`` (matching the existing DQ250 dumps in
 ``bin/dsg/DQ250/``).
-
-Usage:
-    python3 unpack_dsg_sgo.py <out_dir> <file.sgo> [more.sgo ...]
-    python3 unpack_dsg_sgo.py <out_dir> --glob 'frf/*.sgo'
 """
-import glob
 import os
 import re
 import struct
-import sys
 import zipfile
 
 from lib.crypto.dsg_premqb import DSGPreMQB
@@ -150,55 +144,34 @@ def looks_decoded(image: bytes) -> bool:
     return b"getriebe" in image
 
 
-def main(argv):
-    if len(argv) < 3:
-        print(__doc__)
-        return 1
-    out_dir = argv[1]
-    if argv[2] == "--glob":
-        files = sorted(glob.glob(argv[3]))
-    else:
-        files = argv[2:]
-    os.makedirs(out_dir, exist_ok=True)
-    ok = bad = 0
-    written = {}  # Table-C name -> (version string, image) for -par/-sw merging
-    for f in files:
-        try:
-            image, table, blocks = unpack_ex(f)
-        except Exception as e:  # noqa: BLE001
-            print(f"SKIP {os.path.basename(f)}: {e}")
-            bad += 1
-            continue
-        if not looks_decoded(image):
-            print(f"WRONGKEY {os.path.basename(f)} -- needs another table")
-            bad += 1
-            continue
-        box = find_boxcode(image)
-        verstr = image_version(image)
-        if table == "C":
-            # -sw (ASW 0x8000..0x70000) and -par (CAL 0x68000..0x70000) of
-            # the same build are merged into one image; different builds
-            # sharing box+label get the DSG build code appended.
-            label = old_version_label(verstr)
-            name = f"{box}_{label}.bin" if box else f"{label}_{os.path.basename(f)}.bin"
-            prev = written.get(name)
-            if prev and prev[0] == verstr:
-                merged = bytearray(prev[1])
+def extract_container(path, out_dir=None):
+    """Decode one SGO. Returns (image, ``<boxcode>_<label>.bin``).
+
+    Table-C (oldest) builds ship ASW (-sw) and CAL (-par) as separate SGOs; when
+    ``out_dir`` already holds the image of the same build under the same name,
+    this container's blocks are merged into it. A different build sharing
+    box+label gets the DSG build code appended to the name."""
+    f = str(path)
+    image, table, blocks = unpack_ex(f)
+    if not looks_decoded(image):
+        raise ValueError(f"{os.path.basename(f)}: no key table fits (needs another table)")
+    box = find_boxcode(image)
+    verstr = image_version(image)
+    if table == "C":
+        label = old_version_label(verstr)
+        name = f"{box}_{label}.bin" if box else f"{label}_{os.path.basename(f)}.bin"
+        prev_path = os.path.join(str(out_dir), name) if out_dir else None
+        if prev_path and os.path.exists(prev_path):
+            prev = open(prev_path, "rb").read()
+            if image_version(prev) == verstr:
+                merged = bytearray(prev)
                 for _btype, addr, length, _payload in blocks:
                     merged[addr : addr + length] = image[addr : addr + length]
                 image = bytes(merged)
-            elif prev:
+            else:
                 name = name[:-4] + f"_{dsg_code(verstr)}.bin"
-            written[name] = (verstr, image)
-        else:
-            label = version_label(verstr)
-            name = f"{box}_{label}.bin" if box else f"{label}_{os.path.basename(f)}.bin"
-        open(os.path.join(out_dir, name), "wb").write(image)
-        print(f"OK   {name:28} <- {os.path.basename(f)}")
-        ok += 1
-    print(f"\n{ok} decoded, {bad} skipped")
-    return 0
+    else:
+        label = version_label(verstr)
+        name = f"{box}_{label}.bin" if box else f"{label}_{os.path.basename(f)}.bin"
+    return image, name
 
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv))

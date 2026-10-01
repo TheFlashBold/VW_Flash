@@ -4,7 +4,7 @@ Bosch EDC17C64 (VAG EA288 2.0 TDI, e.g. 04L906021*) flash info.
 This module targets the *newer* ASAM ODX-F (XML) FRF containers whose blocks use
 <ENCRYPT-COMPRESS-METHOD> = "A1": compression 'A' = LZSS10, encryption '1' =
 repeating-XOR with key "BiWbBuD101" (see lib/crypto/edc17.py). This is a
-different codec from the older bracket-text "BCB Type1" EDC17 (extract_frf_edc17.py).
+different codec from the older bracket-text "BCB Type1" EDC17 (lib/containers/bosch.py).
 
 Scope: READ / EXTRACTION only. extract_odx() uses only flash_info.crypto plus the
 block sizes/compression carried in the ODX itself, so extraction is fully
@@ -95,3 +95,17 @@ edc17c64_flash_info = FlashInfo(
     None,  # patch_info: no CBOOT patch
     checksum_block_location_edc17c64,
 )
+
+
+def _output_name(stem: str, blocks: list) -> str:
+    """<box>_<version>_<ASW id>.bin, ASW id (e.g. C866DA76S) from the FRF blocks
+    (not the template), matching the bins in bin/EDC17/C64/."""
+    import re
+    for data in blocks:
+        m = re.search(rb"C866DA[0-9A-Z]{2,4}", data)
+        if m:
+            return f"{stem}_{m.group().decode()}.bin"
+    return f"{stem}.bin"
+
+
+edc17c64_flash_info.output_name = _output_name

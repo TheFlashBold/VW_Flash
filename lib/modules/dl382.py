@@ -130,3 +130,11 @@ dsg_flash_info = FlashInfo(
 # SH-2A Conti bootloader splits block erase into phases and returns an NRC
 # between them (same behaviour as DQ381 @0x80013470) — retry erase.
 dsg_flash_info.erase_retries = 5
+
+# The TriCore TC1784 "DL382" (box 0CK910255, spare part 8W0/8W1/8W2927155) ships
+# FRFs with ENCRYPT-COMPRESS-METHOD "11" in the same block layout, encrypted with
+# the DL501 substitution table. FRF extraction falls back to it; flashing keeps
+# the plaintext crypto of the SH-2A unit above.
+from lib.crypto import dsg  # noqa: E402
+
+dsg_flash_info.alt_cryptos = [dsg.DSG("dl501_key.bin")]

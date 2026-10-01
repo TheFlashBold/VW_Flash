@@ -1,3 +1,6 @@
+import struct
+import zlib
+
 from lib.constants import ControlModuleIdentifier, FlashInfo
 from lib.crypto import al551
 
@@ -84,3 +87,61 @@ dsg_flash_info = FlashInfo(
     None,
     None,
 )
+
+# Block CRCs, ported from generic-frontend src/server/tuning/checksum/al551.ts.
+# Every flash block starts with a header (magic 87 65 43 xx) whose checksum
+# descriptor at +0x34 is {u16 0x0004, u16 0xFFFF, u32 start, u32 end (inclusive),
+# u32 0xFFFFFFFF, u32 crc} (big endian). The CRC is the standard reflected CRC-32
+# (zlib.crc32) over [start, end]; the range never covers the header. The CAL start
+# varies per version (0x18C000..0x190000) and is read from the header. FD_2/FD_3
+# (bootloader) carry the same CRC plus an RSA signature and are not meant to be
+# edited. Works on the full image, not on FRF blocks: the ASW range may run up to
+# 0x180000, past the end of FD_1 (0x17FE00). Absent blocks (erased, e.g. the ASW of
+# an OBD CAL read) are skipped.
+# (block name, header offset, range limit)
+crc_blocks = [
+    ("FD_2", 0x6000, 0x7E00),
+    ("FD_3", 0x20000, 0x3FE00),
+    ("ASW", 0x40000, 0x180000),
+    ("CAL", 0x180200, 0x200000),
+]
+crc_range_field = 0x38
+crc_field = 0x44
+
+
+def _crc_range(data: bytes, header: int, limit: int):
+    """CRC range [start, end) of a block, or None when the block is absent
+    (erased, e.g. the ASW/boot area of an OBD CAL read) or the header is invalid."""
+    if len(data) < limit or data[header:header + 3] != b"\x87\x65\x43":
+        return None
+    start, end_incl = struct.unpack_from(">II", data, header + crc_range_field)
+    end = end_incl + 1
+    if start < header + crc_field + 4 or end > limit or end <= start:
+        return None
+    return start, end
+
+
+def checksum_image(data: bytes) -> list:
+    """[(block name, crc offset, stored crc, calculated crc)] for every present block."""
+    out = []
+    for name, header, limit in crc_blocks:
+        rng = _crc_range(data, header, limit)
+        if rng is None:
+            continue
+        stored = struct.unpack_from(">I", data, header + crc_field)[0]
+        out.append((name, header + crc_field, stored, zlib.crc32(data[rng[0]:rng[1]])))
+    return out
+
+
+def checksum_fix_image(data: bytes) -> bytes:
+    """Return a copy of the image with every present block CRC recalculated."""
+    img = bytearray(data)
+    for name, header, limit in crc_blocks:
+        rng = _crc_range(img, header, limit)
+        if rng is not None:
+            struct.pack_into(">I", img, header + crc_field, zlib.crc32(img[rng[0]:rng[1]]))
+    return bytes(img)
+
+
+dsg_flash_info.checksum_image = checksum_image
+dsg_flash_info.checksum_fix_image = checksum_fix_image

@@ -10,8 +10,10 @@ class BinFileHandler:
     def __init__(self, flash_info: FlashInfo):
         self.flash_info = flash_info
 
-    def bin_from_blocks(self, output_blocks):
-        outfile_data = bytearray(self.flash_info.binfile_size)
+    def bin_from_blocks(self, output_blocks, base: bytes | None = None):
+        # base: optional full image (e.g. a bench read) supplying the bytes no
+        # block covers, such as the bootloader; zero-filled otherwise.
+        outfile_data = bytearray(base) if base else bytearray(self.flash_info.binfile_size)
         for filename in output_blocks:
             output_block: BlockData = output_blocks[filename]
             binary_data = output_block.block_bytes
@@ -20,7 +22,7 @@ class BinFileHandler:
                 self.flash_info.binfile_layout[
                     block_number
                 ] : self.flash_info.binfile_layout[block_number]
-                + self.flash_info.block_lengths[block_number]
+                + len(binary_data)
             ] = binary_data
         return outfile_data
 
@@ -48,7 +50,7 @@ class BinFileHandler:
                                     1
                                 ]
                             ]
-                            .decode()
+                            .decode(errors="replace")
                         ),
                         str(
                             input_blocks[filename]
@@ -61,7 +63,7 @@ class BinFileHandler:
                                     1
                                 ]
                             ]
-                            .decode()
+                            .decode(errors="replace")
                         ),
                     ]
                 )

@@ -8,7 +8,7 @@ from lib.crypto.crypto_interface import CryptoInterface
 # same "1" position would map to an AES key.
 #
 # The key "BiWbBuD101" is the community-known repeating key also used by the
-# older bracket-text BCB streams (see extract_frf_edc17.py KNOWN_KEYS).
+# older bracket-text BCB streams (see lib/containers/bosch.py KNOWN_KEYS).
 
 
 class Edc17RepeatingXor(CryptoInterface):
