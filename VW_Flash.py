@@ -19,6 +19,7 @@ import lib.simos_flash_utils as simos_flash_utils
 import lib.dq381_flash_utils as dq381_flash_utils
 import lib.dsg_flash_utils as dsg_flash_utils
 import lib.haldex_flash_utils as haldex_flash_utils
+import lib.eps_flash_utils as eps_flash_utils
 
 import lib.flash_uds as flash_uds
 
@@ -45,6 +46,7 @@ from lib.modules import (
     al551,
     al991,
     edc17c64,
+    eps_mqb,
 )
 from lib.containers import bosch, dsg_premqb_sgo, vl300_sgo, pcr21, gateway
 
@@ -101,7 +103,12 @@ parser.add_argument(
         "extract_frf",
         "get_ecu_info",
         "get_dtcs",
+        "scan",
+        "write_coding",
         "log",
+        "dump",
+        "dump_ccp",
+        "sniff_ccp",
     ],
     required=True,
 )
@@ -138,6 +145,7 @@ parser.add_argument("--al450", help="ZF 8HP AL450 (2H0927158*, Amarok), extract_
 parser.add_argument("--al551", help="ZF 8HP AL551 (4G0927158*/4H1927158*), extract_frf only.", action="store_true")
 parser.add_argument("--al991", help="ZF 8HP AL991 (0C8927750*), extract_frf only.", action="store_true")
 parser.add_argument("--edc17c64", help="Bosch EDC17C64 (04L906021*), extract_frf only.", action="store_true")
+parser.add_argument("--eps", help="MQB EPS (3Q0/5Q0909144*, ZF/V850), extract_frf + checksum only.", action="store_true")
 # Self-addressed containers (SGO / BCB / Aisin ODX ...): the layout comes from the
 # container itself (lib/containers), not from a FlashInfo. extract_frf only.
 parser.add_argument("--edc17", help="Bosch BCB Type1 / LZSS10 FRF, ODX or SGO (EDC17, MED17, MED9), extract_frf only.", action="store_true")
@@ -220,6 +228,66 @@ parser.add_argument(
     required=False,
 )
 
+# Module scan / coding (--action scan / write_coding), see lib/module_scan.py.
+parser.add_argument(
+    "--module",
+    type=lambda x: int(x, 16),
+    action="append",
+    help="scan/write_coding: diagnostic address in hex (e.g. 09); repeat for several. "
+    "scan default: all known MQB modules",
+)
+parser.add_argument(
+    "--coding", type=str, help="write_coding: complete new long coding as hex"
+)
+parser.add_argument(
+    "--labels",
+    type=str,
+    help="scan/write_coding: coding label JSON (default: data/coding_labels.json)",
+)
+parser.add_argument(
+    "--label",
+    type=str,
+    help="scan: force a label definition by id fragment (e.g. HV1)",
+)
+parser.add_argument(
+    "--no_dtcs", action="store_true", help="scan: skip reading fault memory"
+)
+parser.add_argument(
+    "--yes", action="store_true", help="write_coding: actually write (default: dry run)"
+)
+
+# EPS CCP (raw-CAN) dump/sniff options (used with --eps --action dump_ccp/sniff_ccp).
+parser.add_argument(
+    "--start",
+    type=lambda x: int(x, 0),
+    default=0x61000,
+    help="EPS CCP dump start address (default 0x61000)",
+)
+parser.add_argument(
+    "--length",
+    type=lambda x: int(x, 0),
+    default=0x2000,
+    help="EPS CCP dump length in bytes (default 0x2000 = 8 KB)",
+)
+parser.add_argument(
+    "--cro_id",
+    type=lambda x: int(x, 0),
+    default=0x07FC9600,
+    help="EPS CCP command (CRO) extended 29-bit CAN id (default 0x07FC9600)",
+)
+parser.add_argument(
+    "--upload_chunk",
+    type=lambda x: int(x, 0),
+    default=0x40,
+    help="EPS CCP bytes requested per UPLOAD (default 0x40)",
+)
+parser.add_argument(
+    "--sniff_seconds",
+    type=float,
+    default=5.0,
+    help="EPS CCP sniff_ccp duration in seconds (default 5)",
+)
+
 args = parser.parse_args()
 
 if args.simos8:
@@ -295,7 +363,7 @@ for flag, extractor in (
 
 extract_only = (
     args.dl501 or args.vl381 or args.al450 or args.al551 or args.al991
-    or args.edc17c64 or container is not None
+    or args.edc17c64 or args.eps or container is not None
 )
 is_dsg = (
     args.dsg or args.dq200 or args.dq381 or args.dl382 or args.dq400
@@ -311,11 +379,22 @@ if args.al551:
 if args.al991:
     flash_info = al991.dsg_flash_info
 
+if args.eps:
+    flash_info = eps_mqb.eps_flash_info
+
 # Modules that know their checksums on the full flat image (FlashInfo
 # checksum_image / checksum_fix_image, e.g. AL551/AL450) can also check
 # (checksum) and correct (prepare --output_bin) a bin without flash support.
 image_checksum = container is None and hasattr(flash_info, "checksum_image")
 allowed_actions = ("extract_frf", "checksum", "prepare") if image_checksum else ("extract_frf",)
+# Modules that expose a UDS upload helper (e.g. EPS) also allow reading a block out
+# and flashing it back (CRC recomputed + sent in checkMemory by eps_flash_utils).
+if container is None and hasattr(flash_info, "seed_key"):
+    allowed_actions = allowed_actions + ("dump", "get_ecu_info", "flash_bin")
+# EPS also supports the raw-CAN CCP channel dump/sniff (lib/eps_ccp.py), which
+# reads the live dataset non-destructively; independent of the ISO-TP path.
+if args.eps:
+    allowed_actions = allowed_actions + ("dump_ccp", "sniff_ccp")
 if extract_only and args.action not in allowed_actions:
     logger.critical(
         f"{container_name or flash_info.project_name} only supports --action "
@@ -359,6 +438,9 @@ if args.dsg or args.dq200 or args.dq400 or args.dq500 or args.dq500_0dl:
 
 if args.dq381 or args.dl382:
     flash_utils = dq381_flash_utils
+
+if args.eps:
+    flash_utils = eps_flash_utils
 
 if args.haldex:
     flash_utils = haldex_flash_utils
@@ -409,7 +491,10 @@ def input_blocks_from_frf(frf_path: str) -> dict[str, BlockData]:
     input_blocks = {}
     for i in flash_info.block_names_frf.keys():
         filename = flash_info.block_names_frf[i]
-        input_blocks[filename] = BlockData(i, flash_data[filename])
+        # A single FRF may carry only a subset of blocks (e.g. per-block EPS FRFs,
+        # or a CAL-only read); take whatever this container actually contains.
+        if filename in flash_data:
+            input_blocks[filename] = BlockData(i, flash_data[filename])
     return input_blocks
 
 
@@ -659,6 +744,94 @@ elif args.action == "get_ecu_info":
 
     t.close()
 
+elif args.action == "dump":
+    if not args.output_bin:
+        logger.critical("dump needs --output_bin")
+        exit(1)
+    block_number = int(flash_info.block_to_number(args.block[0])) if args.block else 7
+
+    t = tqdm.tqdm(
+        total=100,
+        colour="green",
+        ncols=round(shutil.get_terminal_size().columns * 0.75),
+    )
+
+    def wrap_callback_function(flasher_step, flasher_status, flasher_progress):
+        callback_function(t, flasher_step, flasher_status, float(flasher_progress))
+
+    data = flash_uds.upload_block(
+        flash_info,
+        block_number,
+        interface=args.interface,
+        callback=wrap_callback_function,
+    )
+    t.close()
+    Path(args.output_bin).write_bytes(data)
+    logger.info(f"Wrote {len(data)} bytes to {args.output_bin}")
+
+elif args.action == "sniff_ccp":
+    from lib import eps_ccp
+
+    logger.info(
+        "EPS CCP sniff on %s, CRO id 0x%X, %.1fs"
+        % (args.interface, args.cro_id, args.sniff_seconds)
+    )
+    frames = eps_ccp.sniff_ccp(
+        args.interface, seconds=args.sniff_seconds, cro_id=args.cro_id
+    )
+    if not frames:
+        logger.warning(
+            "No CAN frames observed. Check ignition, bus routing, and that the "
+            "dongle firmware supports raw mode."
+        )
+    counts = {}
+    for arb_id, extended, frame_data in frames:
+        logger.info(
+            "RX 0x%08X %s %s"
+            % (arb_id, "EXT" if extended else "STD", frame_data.hex())
+        )
+        counts[(arb_id, extended)] = counts.get((arb_id, extended), 0) + 1
+    for (arb_id, extended), count in sorted(counts.items()):
+        logger.info(
+            "  id 0x%08X %s: %d frame(s)"
+            % (arb_id, "EXT" if extended else "STD", count)
+        )
+
+elif args.action == "dump_ccp":
+    if not args.output_bin:
+        logger.critical("dump_ccp needs --output_bin")
+        exit(1)
+    from lib import eps_ccp
+
+    logger.info(
+        "EPS CCP dump 0x%X-0x%X (CRO 0x%X) on %s"
+        % (args.start, args.start + args.length, args.cro_id, args.interface)
+    )
+
+    t = tqdm.tqdm(
+        total=args.length,
+        colour="green",
+        ncols=round(shutil.get_terminal_size().columns * 0.75),
+    )
+
+    def ccp_progress(done, total):
+        t.update(done - t.n)
+
+    data = eps_ccp.dump_eps_parametrization(
+        args.interface,
+        start=args.start,
+        length=args.length,
+        cro_id=args.cro_id,
+        upload_chunk=args.upload_chunk,
+        progress=ccp_progress,
+    )
+    t.close()
+    Path(args.output_bin).write_bytes(data)
+    logger.info(
+        "Wrote %d bytes (EPS 0x%X-0x%X) to %s"
+        % (len(data), args.start, args.start + args.length, args.output_bin)
+    )
+
 elif args.action == "get_dtcs":
     t = tqdm.tqdm(
         total=100,
@@ -675,6 +848,81 @@ elif args.action == "get_dtcs":
     [t.write(str(dtc) + " : " + dtcs[dtc]) for dtc in dtcs]
 
     t.close()
+
+elif args.action == "scan":
+    from lib import module_scan
+
+    def say(msg, level=logging.INFO):
+        print(msg)
+        logger.log(level, msg)
+
+    modules = (
+        [module_scan.module_by_address(a) for a in args.module]
+        if args.module
+        else module_scan.MQB_MODULES
+    )
+    labels = module_scan.LabelData(Path(args.labels) if args.labels else None)
+    if not labels.definitions:
+        say(f"No coding labels at {labels.labels_path}: coding shown raw")
+
+    def scan_progress(i, total, module):
+        say(f"[{i + 1}/{total}] {module.address:02X} {module.name}")
+
+    results = module_scan.scan_modules(
+        args.interface, modules, read_dtcs=not args.no_dtcs, progress=scan_progress
+    )
+    report = []
+    for result in results:
+        report.extend(module_scan.format_result(result, labels, args.label))
+        report.append("")
+    print("\n".join(report))
+    found = [r for r in results if r.present]
+    say(f"{len(found)}/{len(results)} modules answered")
+    if args.output_bin:
+        Path(args.output_bin).write_text("\n".join(report))
+        say(f"Report written to {args.output_bin}")
+
+elif args.action == "write_coding":
+    from lib import module_scan
+
+    def say(msg, level=logging.INFO):
+        print(msg)
+        logger.log(level, msg)
+
+    if not args.module or len(args.module) != 1 or not args.coding:
+        say("write_coding needs exactly one --module and --coding", logging.CRITICAL)
+        exit(1)
+    module = module_scan.module_by_address(args.module[0])
+    new = bytes.fromhex(args.coding.replace(" ", ""))
+    current = module_scan.scan_modules(args.interface, [module], read_dtcs=False)[0]
+    if not current.present or current.coding is None:
+        say(f"{module.address:02X}: no response / no long coding", logging.CRITICAL)
+        exit(1)
+    old = current.coding
+    backup = Path(currentPath, "logs", f"coding_{module.address:02X}_{old.hex()}.txt")
+    backup.parent.mkdir(exist_ok=True)
+    labels = module_scan.LabelData(Path(args.labels) if args.labels else None)
+    backup.write_text("\n".join(module_scan.format_result(current, labels)))
+    say(f"Backup of current coding: {backup}")
+    say(f"old: {old.hex().upper()}")
+    say(f"new: {new.hex().upper()}")
+    if len(new) != len(old):
+        say(f"length mismatch: module has {len(old)} bytes, given {len(new)}", logging.CRITICAL)
+        exit(1)
+    for i, (a, b) in enumerate(zip(old, new)):
+        if a != b:
+            say(f"  Byte {i:02d}: {a:08b} -> {b:08b}")
+    if old == new:
+        say("Coding unchanged, nothing to write")
+        exit(0)
+    if not args.yes:
+        say("Dry run - add --yes to write")
+        exit(0)
+    readback = module_scan.write_coding(args.interface, module, new)
+    if readback != new:
+        say(f"Readback differs: {readback.hex().upper()}", logging.CRITICAL)
+        exit(1)
+    say("Coding written and verified")
 
 elif args.action == "log":
     logger = hsl_logger(

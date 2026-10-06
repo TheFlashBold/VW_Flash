@@ -3,6 +3,7 @@ import glob
 from pathlib import Path
 import wx
 import os.path as path
+import os
 import logging
 import json
 import threading
@@ -20,6 +21,8 @@ from lib import simos_flash_utils
 from lib import dsg_flash_utils
 from lib import dq381_flash_utils
 from lib import haldex_flash_utils
+from lib import eps_flash_utils
+from lib import eps_ccp
 from lib import constants
 from lib import simos_hsl
 
@@ -38,6 +41,8 @@ from lib.modules import (
     dq500_0dl,
     simos16,
     haldex4motion,
+    eps_mqb,
+    gateway_mqb,
 )
 
 DEFAULT_STMIN = 350000
@@ -104,6 +109,23 @@ def write_config(paths):
         json.dump(paths, config_file)
 
 
+class FeedbackLogHandler(logging.Handler):
+    """Routes raw-frame log records (logger "CANFrames") into a wx TextCtrl so the
+    operator can watch the ISO-TP/UDS frames live, in addition to the log file."""
+
+    def __init__(self, text_ctrl):
+        super().__init__()
+        self.text_ctrl = text_ctrl
+        self.setFormatter(logging.Formatter("%(message)s"))
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+        except Exception:
+            return
+        wx.CallAfter(self.text_ctrl.AppendText, msg + "\n")
+
+
 def module_selection_is_dq250(selection_index):
     return selection_index == 2
 
@@ -126,6 +148,14 @@ def module_selection_is_dq500_0dl(selection_index):
 
 def module_selection_is_haldex(selected_index):
     return selected_index == 7
+
+
+def module_selection_is_eps(selection_index):
+    return selection_index == 8
+
+
+def module_selection_is_gateway(selection_index):
+    return selection_index == 9
 
 
 def module_selection_is_dsg(selection_index):
@@ -281,6 +311,52 @@ class StminDialog(wx.Dialog):
             self.Close()
 
 
+class EpsIdsDialog(wx.Dialog):
+    def __init__(self, parent, title, tx_hex: str, rx_hex: str):
+        super(EpsIdsDialog, self).__init__(parent, title=title, size=(320, 180))
+        panel = wx.Panel(self)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        grid = wx.FlexGridSizer(2, 2, 5, 5)
+        self.tx_ctrl = wx.TextCtrl(panel, value=tx_hex)
+        self.rx_ctrl = wx.TextCtrl(panel, value=rx_hex)
+        grid.Add(wx.StaticText(panel, label="Request ID (tx):"), 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self.tx_ctrl, 1, wx.EXPAND)
+        grid.Add(wx.StaticText(panel, label="Response ID (rx):"), 0, wx.ALIGN_CENTER_VERTICAL)
+        grid.Add(self.rx_ctrl, 1, wx.EXPAND)
+        button_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.ok_btn = wx.Button(panel, wx.ID_OK, label="Save")
+        self.cancel_btn = wx.Button(panel, wx.ID_CANCEL, label="Cancel")
+        button_sizer.Add(self.ok_btn)
+        button_sizer.Add(self.cancel_btn, flag=wx.LEFT, border=5)
+        sizer.Add(grid, flag=wx.EXPAND | wx.ALL, border=10)
+        sizer.Add(button_sizer, flag=wx.ALIGN_RIGHT | wx.ALL, border=5)
+        panel.SetSizer(sizer)
+        self.ok_btn.Bind(wx.EVT_BUTTON, self.on_button)
+        self.cancel_btn.Bind(wx.EVT_BUTTON, self.on_button)
+        self.result = None
+
+    def on_button(self, event):
+        if self.IsModal():
+            if event.EventObject.Id == wx.ID_OK:
+                try:
+                    tx = int(self.tx_ctrl.GetValue().strip(), 16)
+                    rx = int(self.rx_ctrl.GetValue().strip(), 16)
+                except ValueError:
+                    wx.MessageDialog(
+                        self,
+                        "IDs must be hex, e.g. 0x712 / 0x77C.",
+                        "Invalid ID",
+                        wx.OK | wx.ICON_ERROR,
+                    ).ShowModal()
+                    return
+                self.result = ("0x%03X" % tx, "0x%03X" % rx)
+                self.EndModal(wx.ID_OK)
+            else:
+                self.EndModal(wx.ID_CANCEL)
+        else:
+            self.Close()
+
+
 class FlashPanel(wx.Panel):
     input_blocks: dict[str, constants.BlockData]
 
@@ -302,6 +378,9 @@ class FlashPanel(wx.Panel):
                 "scanble": False,
                 "logmode": "22",
                 "activitylevel": "INFO",
+                "eps_txid": "0x712",
+                "eps_rxid": "0x77C",
+                "showframes": False,
             }
             write_config(self.options)
 
@@ -315,7 +394,9 @@ class FlashPanel(wx.Panel):
 
         main_sizer = wx.BoxSizer(wx.VERTICAL)
         folder_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        actions_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        # WrapSizer so the action buttons wrap to the next line on narrow windows
+        # instead of being clipped.
+        actions_sizer = wx.WrapSizer(wx.HORIZONTAL)
         selections_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
         # Create a drop down menu
@@ -331,6 +412,8 @@ class FlashPanel(wx.Panel):
             "DQ500-0BH DSG",
             "DQ500-0DL DSG",
             "Haldex (4motion) UNTESTED",
+            "EPS MQB (ZF) UNTESTED",
+            "Gateway MQB (Get Info only)",
         ]
         self.module_choice = wx.Choice(self, choices=available_modules)
         self.module_choice.SetSelection(0)
@@ -358,7 +441,7 @@ class FlashPanel(wx.Panel):
 
         self.list_ctrl = wx.ListCtrl(
             self,
-            size=(-1, 250),
+            size=(-1, 140),
             style=wx.LC_REPORT | wx.BORDER_SUNKEN | wx.LC_SINGLE_SEL,
         )
         self.list_ctrl.InsertColumn(0, "Filename", width=400)
@@ -372,7 +455,7 @@ class FlashPanel(wx.Panel):
         )
 
         self.feedback_text = wx.TextCtrl(
-            self, size=(-1, 300), style=wx.TE_READONLY | wx.TE_LEFT | wx.TE_MULTILINE
+            self, size=(-1, 160), style=wx.TE_READONLY | wx.TE_LEFT | wx.TE_MULTILINE
         )
 
         flash_button = wx.Button(self, label="Flash")
@@ -384,21 +467,51 @@ class FlashPanel(wx.Panel):
         get_info_button = wx.Button(self, label="Get Ecu Info")
         get_info_button.Bind(wx.EVT_BUTTON, self.on_get_info)
 
+        # EPS-only buttons: read the live parametrization over the raw-CAN CCP
+        # channel. Shown only while the EPS MQB module is selected (see
+        # apply_module_buttons()). (The old 0x35 "Dump ECU" button was removed:
+        # the bootloader upload is state-gated and returns 0x31 on intact blocks.)
+        self.dump_ccp_button = wx.Button(self, label="Dump EPS (CCP)")
+        self.dump_ccp_button.Bind(wx.EVT_BUTTON, self.on_dump_ccp)
+
+        self.sniff_ccp_button = wx.Button(self, label="Sniff EPS (CCP)")
+        self.sniff_ccp_button.Bind(wx.EVT_BUTTON, self.on_sniff_ccp)
+
         actions_sizer.Add(self.module_choice, 0, wx.LEFT, 5)
         actions_sizer.Add(get_info_button, 0, wx.LEFT | wx.RIGHT, 5)
         actions_sizer.Add(dtc_button, 0, wx.RIGHT, 5)
+        actions_sizer.Add(self.dump_ccp_button, 0, wx.RIGHT, 5)
+        actions_sizer.Add(self.sniff_ccp_button, 0, wx.RIGHT, 5)
 
-        selections_sizer.Add(self.action_choice, 0, wx.EXPAND | wx.ALL, 5)
-        selections_sizer.Add(flash_button, 0, wx.EXPAND | wx.ALL, 5)
+        # action_choice fills the width; the Flash button keeps its size.
+        selections_sizer.Add(self.action_choice, 1, wx.EXPAND | wx.ALL, 5)
+        selections_sizer.Add(flash_button, 0, wx.ALL, 5)
 
-        main_sizer.Add(self.feedback_text, 0, wx.ALL | wx.EXPAND, 5)
-        main_sizer.Add(actions_sizer, 0, wx.TOP, 5)
-        main_sizer.Add(folder_sizer, 0, wx.ALIGN_RIGHT, 5)
-        main_sizer.Add(self.list_ctrl, 0, wx.ALL | wx.EXPAND, 5)
-        main_sizer.Add(self.progress_bar, 0, wx.EXPAND, 5)
-        main_sizer.Add(selections_sizer)
+        # Vertical layout: the log (feedback_text) and the file list both grow
+        # with the window (proportion > 0 + EXPAND); the button/choice/progress
+        # rows keep their height but expand horizontally.
+        main_sizer.Add(self.feedback_text, 2, wx.ALL | wx.EXPAND, 5)
+        main_sizer.Add(actions_sizer, 0, wx.EXPAND | wx.TOP, 5)
+        main_sizer.Add(folder_sizer, 0, wx.EXPAND, 5)
+        main_sizer.Add(self.list_ctrl, 1, wx.ALL | wx.EXPAND, 5)
+        main_sizer.Add(self.progress_bar, 0, wx.EXPAND | wx.ALL, 2)
+        main_sizer.Add(selections_sizer, 0, wx.EXPAND)
 
         self.SetSizer(main_sizer)
+
+        # Apply any saved EPS diagnostic ID overrides to the EPS flash_info.
+        self.apply_eps_ids()
+
+        # Show the EPS-only buttons only for the EPS module (default module is
+        # not EPS, so they start hidden).
+        self.apply_module_buttons()
+
+        # Route raw ISO-TP/UDS frame logging into the feedback box. Toggle via
+        # Interface -> "Show raw CAN frames".
+        self.frame_log_handler = FeedbackLogHandler(self.feedback_text)
+        self.frame_logger = logging.getLogger("CANFrames")
+        self.frame_logger.setLevel(logging.INFO)
+        self.apply_frame_logging(self.options.get("showframes", True))
 
         if self.options["cal"] != "":
             self.current_folder_path = self.options["cal"]
@@ -409,8 +522,46 @@ class FlashPanel(wx.Panel):
             event.GetIndex(), wx.Font(wx.FontInfo().Bold(selected))
         )
 
+    def eps_ids(self):
+        # (txid, rxid) the GUI uses for the EPS module. Firmware default is
+        # tx 0x712 / rx 0x77C; overridable from the config (Interface menu) in
+        # case the gateway on a given car diagnoses the module under other IDs.
+        txid = int(str(self.options.get("eps_txid", "0x712")), 16)
+        rxid = int(str(self.options.get("eps_rxid", "0x77C")), 16)
+        return (txid, rxid)
+
+    def apply_eps_ids(self):
+        # Push the configured EPS diagnostic IDs onto the EPS flash_info so both
+        # the dump and any flash use them.
+        txid, rxid = self.eps_ids()
+        eps_mqb.eps_flash_info.control_module_identifier = (
+            constants.ControlModuleIdentifier(rxid, txid)
+        )
+
+    def apply_module_buttons(self):
+        # Show the EPS-only buttons (Dump ECU, Dump/Sniff EPS CCP) only while the
+        # EPS MQB module is selected; hide them for every other module.
+        is_eps = module_selection_is_eps(self.module_choice.GetSelection())
+        for btn in (self.dump_ccp_button, self.sniff_ccp_button):
+            btn.Show(is_eps)
+        self.Layout()
+
+    def apply_frame_logging(self, enabled: bool):
+        # Gate the frame logger entirely: when off, raise its level so nothing is
+        # emitted to the window OR the log files (a RequestUpload dumps tens of
+        # thousands of frames and would otherwise flood both).
+        self.frame_logger.removeHandler(self.frame_log_handler)
+        if enabled:
+            self.frame_logger.setLevel(logging.INFO)
+            self.frame_logger.addHandler(self.frame_log_handler)
+        else:
+            self.frame_logger.setLevel(logging.WARNING)
+
     def on_module_changed(self, event):
         module_number = self.module_choice.GetSelection()
+        if module_selection_is_eps(module_number):
+            self.apply_eps_ids()
+        self.apply_module_buttons()
         self.flash_info = [
             simos18.s18_flash_info,
             simos1810.s1810_flash_info,
@@ -420,20 +571,45 @@ class FlashPanel(wx.Panel):
             dq500_0bh.dsg_flash_info,
             dq500_0dl.dsg_flash_info,
             haldex4motion.haldex_flash_info,
+            eps_mqb.eps_flash_info,
+            gateway_mqb.gateway_flash_info,
         ][module_number]
         if self.flash_info == haldex4motion.haldex_flash_info:
             self.binfile_handler = haldex_binfile.HaldexBinFileHandler(self.flash_info)
         else:
             self.binfile_handler = binfile.BinFileHandler(self.flash_info)
 
+    def report_error(self, context: str, exc: Exception):
+        # Surface a worker/UDS failure in the feedback box instead of letting it
+        # bubble up to the global excepthook, which calls wx.Exit() and kills the
+        # whole GUI. A dead/timed-out connection shows up here as a udsoncan
+        # "object of type 'NoneType' has no len()" TypeError (the transport
+        # returned no frame), so give that case a human-readable hint.
+        msg = "%s: %s: %s\n" % (context, type(exc).__name__, exc)
+        self.feedback_text.AppendText(msg)
+        text = str(exc).lower()
+        if "nonetype" in text or "timeout" in text or "no len" in text:
+            self.feedback_text.AppendText(
+                "  -> No response from the ECU. Check that the ignition is on, "
+                "that the interface is on a CAN bus that reaches this module "
+                "(the gateway must route the diagnostic IDs), and that the "
+                "diagnostic CAN IDs are correct.\n"
+            )
+        self.progress_bar.SetValue(0)
+        logger.error(context, exc_info=exc)
+
     def on_get_info(self, event):
         (interface, interface_path) = split_interface_name(self.options["interface"])
-        ecu_info = flash_uds.read_ecu_data(
-            self.flash_info,
-            interface=interface,
-            callback=self.update_callback,
-            interface_path=interface_path,
-        )
+        try:
+            ecu_info = flash_uds.read_ecu_data(
+                self.flash_info,
+                interface=interface,
+                callback=self.update_callback,
+                interface_path=interface_path,
+            )
+        except Exception as e:
+            self.report_error("Get ECU info failed", e)
+            return
 
         [
             self.feedback_text.AppendText(did + " : " + ecu_info[did] + "\n")
@@ -442,16 +618,189 @@ class FlashPanel(wx.Panel):
 
     def on_read_dtcs(self, event):
         (interface, interface_path) = split_interface_name(self.options["interface"])
-        dtcs = flash_uds.read_dtcs(
-            self.flash_info,
-            interface=interface,
-            callback=self.update_callback,
-            interface_path=interface_path,
-        )
+        try:
+            dtcs = flash_uds.read_dtcs(
+                self.flash_info,
+                interface=interface,
+                callback=self.update_callback,
+                interface_path=interface_path,
+            )
+        except Exception as e:
+            self.report_error("Read DTCs failed", e)
+            return
         [
             self.feedback_text.AppendText(str(dtc) + " : " + dtcs[dtc] + "\n")
             for dtc in dtcs
         ]
+
+    def on_dump_ccp(self, event):
+        # Read the EPS per-car parametrization (flash 0x61000..0x63000) over the
+        # proprietary raw-CAN CCP channel (lib/eps_ccp), non-destructively. This
+        # is the way to read the LIVE dataset; the 0x35 RequestUpload "Dump ECU"
+        # path is state-gated and returns 0x31 for intact blocks.
+        if not module_selection_is_eps(self.module_choice.GetSelection()):
+            self.feedback_text.AppendText(
+                "Dump EPS (CCP) is only supported for the EPS MQB module.\n"
+            )
+            return
+
+        (interface, interface_path) = split_interface_name(self.options["interface"])
+        if interface != "BLEISOTP":
+            self.feedback_text.AppendText(
+                "EPS CCP requires the BLE dongle in raw-CAN mode "
+                "(select a BLEISOTP interface).\n"
+            )
+            return
+
+        # Region selection (like the "Dump ECU" block picker). The CCP read path
+        # has no address whitelist, so any flash range is readable.
+        # Each entry: (label, start, length, default filename).
+        regions = [
+            ("Parametrization 0x61000-0x63000 (8 KB)",
+             0x61000, 0x2000, "EPS_MQB_parametrization_0x61000.bin"),
+            ("Full ECU flash 0x0-0x85000 (~544 KB, slow)",
+             0x0, 0x85000, "EPS_MQB_full.bin"),
+            ("CAL + parametrization 0x58000-0x63000",
+             0x58000, 0xB000, "EPS_MQB_cal_0x58000.bin"),
+            ("H1 application 0x7000-0x58000",
+             0x7000, 0x51000, "EPS_MQB_H1_0x7000.bin"),
+            ("H7 bootloader 0x0-0x6000",
+             0x0, 0x6000, "EPS_MQB_H7_0x0.bin"),
+            ("H2 0x78000-0x85000",
+             0x78000, 0xD000, "EPS_MQB_H2_0x78000.bin"),
+        ]
+        region_dlg = wx.SingleChoiceDialog(
+            self,
+            "Select the flash region to read over the CCP channel",
+            "Dump EPS (CCP)",
+            [r[0] for r in regions],
+        )
+        region_dlg.SetSelection(0)
+        if region_dlg.ShowModal() != wx.ID_OK:
+            region_dlg.Destroy()
+            return
+        _label, start, length, default_name = regions[region_dlg.GetSelection()]
+        region_dlg.Destroy()
+
+        save_dlg = wx.FileDialog(
+            self,
+            "Save EPS CCP dump as...",
+            defaultFile=default_name,
+            wildcard="*.bin",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        )
+        if save_dlg.ShowModal() != wx.ID_OK:
+            save_dlg.Destroy()
+            return
+        output_path = save_dlg.GetPath()
+        save_dlg.Destroy()
+
+        self.feedback_text.AppendText(
+            "Starting EPS CCP dump of 0x%X-0x%X to %s\n"
+            % (start, start + length, output_path)
+        )
+        self.progress_bar.SetValue(0)
+
+        # The raw channel forwards every bus frame; suppress per-frame logging
+        # for the duration regardless of the menu setting, then restore.
+        frames_were_on = self.options.get("showframes", True)
+
+        def progress(done, total):
+            self.update_callback(
+                flasher_step="EPS CCP dump",
+                flasher_status="read 0x%X / 0x%X" % (done, total),
+                flasher_progress=(done * 100.0 / total) if total else 0,
+            )
+
+        def dump_worker():
+            try:
+                if frames_were_on:
+                    wx.CallAfter(self.apply_frame_logging, False)
+                data = eps_ccp.dump_eps_parametrization(
+                    interface,
+                    start=start,
+                    length=length,
+                    interface_path=interface_path,
+                    progress=progress,
+                )
+                Path(output_path).write_bytes(data)
+                wx.CallAfter(
+                    self.feedback_text.AppendText,
+                    "EPS CCP dump complete: wrote %d bytes to %s\n"
+                    % (len(data), output_path),
+                )
+                wx.CallAfter(self.progress_bar.SetValue, 0)
+            except Exception as e:
+                wx.CallAfter(self.report_error, "EPS CCP dump failed", e)
+            finally:
+                if frames_were_on:
+                    wx.CallAfter(self.apply_frame_logging, True)
+
+        dump_thread = threading.Thread(target=dump_worker)
+        dump_thread.daemon = True
+        dump_thread.start()
+
+    def on_sniff_ccp(self, event):
+        # First bring-up aid: enter raw mode, send CONNECT and print every
+        # observed (id, data) frame for a few seconds so the operator can
+        # confirm the channel answers and identify the DTO reply id. Frame
+        # logging is intentionally left as-is (the volume here is tiny).
+        if not module_selection_is_eps(self.module_choice.GetSelection()):
+            self.feedback_text.AppendText(
+                "Sniff EPS (CCP) is only supported for the EPS MQB module.\n"
+            )
+            return
+
+        (interface, interface_path) = split_interface_name(self.options["interface"])
+        if interface != "BLEISOTP":
+            self.feedback_text.AppendText(
+                "EPS CCP requires the BLE dongle in raw-CAN mode "
+                "(select a BLEISOTP interface).\n"
+            )
+            return
+
+        seconds = 5.0
+        self.feedback_text.AppendText(
+            "Sniffing EPS CCP for %.0fs (CRO 0x%X)...\n"
+            % (seconds, eps_ccp.EPS_CRO_ID)
+        )
+
+        def sniff_worker():
+            try:
+                frames = eps_ccp.sniff_ccp(
+                    interface, seconds=seconds, interface_path=interface_path
+                )
+                if not frames:
+                    wx.CallAfter(
+                        self.feedback_text.AppendText,
+                        "No CAN frames observed. Check ignition, bus routing, "
+                        "and that the dongle firmware supports raw mode.\n",
+                    )
+                    return
+                counts = {}
+                for arb_id, extended, frame_data in frames:
+                    wx.CallAfter(
+                        self.feedback_text.AppendText,
+                        "RX 0x%08X %s %s\n"
+                        % (
+                            arb_id,
+                            "EXT" if extended else "STD",
+                            frame_data.hex(),
+                        ),
+                    )
+                    counts[(arb_id, extended)] = counts.get((arb_id, extended), 0) + 1
+                for (arb_id, extended), count in sorted(counts.items()):
+                    wx.CallAfter(
+                        self.feedback_text.AppendText,
+                        "  id 0x%08X %s: %d frame(s)\n"
+                        % (arb_id, "EXT" if extended else "STD", count),
+                    )
+            except Exception as e:
+                wx.CallAfter(self.report_error, "EPS CCP sniff failed", e)
+
+        sniff_thread = threading.Thread(target=sniff_worker)
+        sniff_thread.daemon = True
+        sniff_thread.start()
 
     def flash_unlock(self, selected_file):
         if (
@@ -607,6 +956,12 @@ class FlashPanel(wx.Panel):
         self.flash_bin()
 
     def on_flash(self, event):
+        if module_selection_is_gateway(self.module_choice.GetSelection()):
+            self.feedback_text.AppendText(
+                "Gateway module is Get-Info only; flashing is not supported here.\n"
+            )
+            return
+
         selected_file = self.list_ctrl.GetFirstSelected()
         if selected_file == -1:
             self.feedback_text.AppendText("SKIPPING: Select a file to flash!\n")
@@ -724,6 +1079,8 @@ class FlashPanel(wx.Panel):
             flash_utils = dq381_flash_utils
         elif module_selection_is_haldex(self.module_choice.GetSelection()):
             flash_utils = haldex_flash_utils
+        elif module_selection_is_eps(self.module_choice.GetSelection()):
+            flash_utils = eps_flash_utils
         else:
             flash_utils = simos_flash_utils
             should_patch_cboot = True
@@ -767,6 +1124,8 @@ class FlashPanel(wx.Panel):
             flash_utils = dq381_flash_utils
         elif module_selection_is_haldex(self.module_choice.GetSelection()):
             flash_utils = haldex_flash_utils
+        elif module_selection_is_eps(self.module_choice.GetSelection()):
+            flash_utils = eps_flash_utils
         else:
             flash_utils = simos_flash_utils
 
@@ -846,6 +1205,7 @@ class FlashPanel(wx.Panel):
 class VW_Flash_Frame(wx.Frame):
     def __init__(self):
         wx.Frame.__init__(self, parent=None, title="VW_Flash GUI", size=(640, 770))
+        self.SetMinSize((480, 520))
         self.panel = FlashPanel(self)
         self.create_menu()
         self.statusbar = self.CreateStatusBar(1)
@@ -928,6 +1288,29 @@ class VW_Flash_Frame(wx.Frame):
             event=wx.EVT_MENU,
             handler=self.on_select_stmin,
             source=set_stmin_menu_item,
+        )
+
+        set_eps_ids_menu_item = interface_menu.Append(
+            wx.ID_ANY,
+            "Set EPS CAN IDs...",
+            "Change the diagnostic request/response CAN IDs for the EPS module",
+        )
+        self.Bind(
+            event=wx.EVT_MENU,
+            handler=self.on_select_eps_ids,
+            source=set_eps_ids_menu_item,
+        )
+
+        show_frames_menu_item = interface_menu.AppendCheckItem(
+            wx.ID_ANY,
+            "Show raw CAN frames",
+            "Show raw ISO-TP/UDS frames (TX/RX) in the window",
+        )
+        show_frames_menu_item.Check(self.panel.options.get("showframes", True))
+        self.Bind(
+            event=wx.EVT_MENU,
+            handler=self.on_toggle_show_frames,
+            source=show_frames_menu_item,
         )
 
         menu_bar.Append(interface_menu, "&Interface")
@@ -1036,6 +1419,25 @@ class VW_Flash_Frame(wx.Frame):
         if res > 0:
             self.panel.options["stmin_override"] = res
             write_config(self.panel.options)
+        dlg.Destroy()
+
+    def on_toggle_show_frames(self, event):
+        enabled = event.IsChecked()
+        self.panel.options["showframes"] = enabled
+        write_config(self.panel.options)
+        self.panel.apply_frame_logging(enabled)
+
+    def on_select_eps_ids(self, event):
+        tx_hex = str(self.panel.options.get("eps_txid", "0x712"))
+        rx_hex = str(self.panel.options.get("eps_rxid", "0x77C"))
+        dlg = EpsIdsDialog(self, "Set EPS CAN IDs", tx_hex, rx_hex)
+        if dlg.ShowModal() == wx.ID_OK and dlg.result is not None:
+            self.panel.options["eps_txid"], self.panel.options["eps_rxid"] = dlg.result
+            write_config(self.panel.options)
+            self.panel.apply_eps_ids()
+            self.panel.feedback_text.AppendText(
+                "EPS CAN IDs set to tx %s / rx %s\n" % dlg.result
+            )
         dlg.Destroy()
 
     def select_logger_path(self, event):

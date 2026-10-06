@@ -354,7 +354,11 @@ def parse_odx_aisin_09g(odx_bytes):
 
 
 AISIN_09S_IMAGE_SIZE = 0x400000
-AISIN_09S_CAL_OFFSET = 0x8000       # code follows the CAL block directly (ends at 0x3C8000)
+# CAL image offset by CAL block size; code follows the CAL block directly.
+# Verified code-relative: AQ250/AQ450 (Ver80x) against the 09S927158CP_3917 read,
+# AQ300 (Ver900) by CAL directory ptrs (0x90000..) and absolute code ptrs -> prologues.
+AISIN_09S_CAL_OFFSETS = {0x58000: 0x8000,     # AQ250/AQ450 Ver80x: code 0x60000..0x3C8000
+                         0x98000: 0x10000}    # AQ300 Ver900:       code 0xA8000..0x3D0000
 
 
 def _aisinaw_decompress(raw):
@@ -390,13 +394,16 @@ def _aisin_09s_blocks(odx_bytes):
 
 
 def parse_odx_aisin_09s(odx_bytes):
-    """Yield (short_name, start, end, data): CAL @0x8000, code right after it."""
+    """Yield (short_name, start, end, data): CAL at its layout offset, code right after it."""
     (cn, (_, csize, craw)), (kn, (_, ksize, kraw)) = _aisin_09s_blocks(odx_bytes)
     cal, code = _aisinaw_decompress(kraw), _aisinaw_decompress(craw)
     if len(cal) != ksize or len(code) != csize:
         raise SystemExit("AISINAW block size mismatch")
-    co = AISIN_09S_CAL_OFFSET + len(cal)
-    yield kn, AISIN_09S_CAL_OFFSET, co - 1, cal
+    base = AISIN_09S_CAL_OFFSETS.get(len(cal))
+    if base is None:
+        raise SystemExit(f"AISINAW: unknown CAL size {len(cal):#x}")
+    co = base + len(cal)
+    yield kn, base, co - 1, cal
     yield cn, co, co + len(code) - 1, code
 
 
@@ -600,7 +607,8 @@ def extract_container(path, out_dir=None, codecs=None, key=DEFAULT_KEY):
         img, base = build_image(blocks, fill=0x00, base=0)
         img = img + bytes(AISIN_09G_IMAGE_SIZE - len(img))
     elif codec == "aisin09s":
-        # 4 MB read layout (09S927158CP_3917 read: CAL 0x8000, code to 0x3C8000);
+        # 4 MB read layout (09S927158CP_3917 read: CAL 0x8000, code to 0x3C8000;
+        # AQ300: CAL 0x10000, code to 0x3D0000);
         # boot and the data tail are not in the container -> 0x00 like 09G
         img, base = build_image(blocks, fill=0x00, base=0)
         img = img + bytes(AISIN_09S_IMAGE_SIZE - len(img))

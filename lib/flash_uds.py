@@ -759,3 +759,113 @@ def read_ecu_data(
             )
 
         return ecuInfo
+
+
+def upload_block(
+    flash_info: constants.FlashInfo,
+    block_number: int,
+    interface="CAN",
+    interface_path=None,
+    callback=None,
+    length: Optional[int] = None,
+) -> bytes:
+    """Read (UDS RequestUpload 0x35) one logical block out of the ECU.
+
+    Enters a programming session, performs SA2 seed/key, then uploads the whole
+    block via 0x35 -> 0x36 (TransferData) -> 0x37. The ECU's addressing is by
+    block identifier (not raw address) and the length must be the whole block, so
+    `length` defaults to flash_info.block_lengths[block_number]. Returns the bytes.
+
+    Used for EPS MQB: `block_number=7` dumps the complete application (H1), which
+    contains the parametrization region and the assist curves.
+    """
+    block_identifier = flash_info.block_identifiers[block_number]
+    if length is None:
+        length = flash_info.block_lengths[block_number]
+
+    conn = connection_setup(
+        interface=interface,
+        rxid=flash_info.control_module_identifier.rxid,
+        txid=flash_info.control_module_identifier.txid,
+        interface_path=interface_path,
+    )
+
+    with Client(
+        conn, request_timeout=5, config=configs.default_client_config
+    ) as client:
+
+        def volkswagen_security_algo(level: int, seed: bytes, params=None) -> bytes:
+            vs = Sa2SeedKey(flash_info.sa2_script, int.from_bytes(seed, "big"))
+            return vs.execute().to_bytes(4, "big")
+
+        client.config["security_algo"] = volkswagen_security_algo
+
+        def cb(status, progress=0):
+            if callback:
+                callback(
+                    flasher_step="READING", flasher_status=status, flasher_progress=progress
+                )
+
+        cb("Opening extended diagnostic session...")
+        client.change_session(
+            services.DiagnosticSessionControl.Session.extendedDiagnosticSession
+        )
+
+        cb("Upgrading to programming session...", 10)
+        try:
+            client.change_session(
+                services.DiagnosticSessionControl.Session.programmingSession
+            )
+        except Exception:
+            def switchpatch_programming_payload(payload):
+                return bytes([0x3E, 0x10, 0x02])
+
+            with client.payload_override(switchpatch_programming_payload):
+                client.session_timing["p2_server_max"] = 30
+                client.config["request_timeout"] = 30
+                client.change_session(
+                    services.DiagnosticSessionControl.Session.programmingSession
+                )
+
+        client.session_timing["p2_server_max"] = 30
+        client.config["request_timeout"] = 30
+        client.tester_present()
+
+        cb("Performing Seed/Key authentication...", 20)
+        client.unlock_security_access(17)
+        client.tester_present()
+
+        cb("Requesting upload of block " + str(block_number), 25)
+        # DFI 0x00: no compression, no encryption (the bootloader's upload parser
+        # requires this). Address = block identifier (1 byte), size = 32-bit.
+        dfi = udsoncan.DataFormatIdentifier(compression=0x0, encryption=0x0)
+        memloc = udsoncan.MemoryLocation(
+            block_identifier,
+            length,
+            address_format=8,
+            memorysize_format=32,
+        )
+        client.request_upload(memloc, dfi=dfi)
+
+        data = bytearray()
+        counter = 1
+        while len(data) < length:
+            response = client.transfer_data(counter)
+            chunk = response.service_data.parameter_records
+            if not chunk:
+                detailedLogger.warning(
+                    "Upload returned an empty TransferData block at offset %d; stopping."
+                    % len(data)
+                )
+                break
+            data += chunk
+            counter = next_counter(counter)
+            cb(
+                "Uploading... %d / %d bytes" % (len(data), length),
+                round(100 * min(1.0, len(data) / length), 1),
+            )
+
+        client.request_transfer_exit()
+        cb("Upload complete (%d bytes)" % len(data), 100)
+
+        return bytes(data[:length])

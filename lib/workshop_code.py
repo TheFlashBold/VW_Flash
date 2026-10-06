@@ -1,5 +1,5 @@
 # This module constructs special VW_Flash Workshop Codes. They follow the following format:
-# YY MM DD : BCD-coded bytes indicating the flash date, for decoding by ODIS/VCDS/other tools.
+# YY MM DD : BCD-coded bytes indicating the flash date, for decoding by diagnostic tools.
 # AA : CRC8 checksum of the ASW blocks flashed to the ECU, appended in order.
 # UU UU UU UU : 4 bytes of user-defined information. On Simos, this is pulled from the bytes after the identifier in the CAL.
 # This is a way to identify what was flashed last without ASW patches or ReadMemory access.
