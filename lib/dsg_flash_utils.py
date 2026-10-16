@@ -129,8 +129,8 @@ def prepare_blocks(flash_info: constants.FlashInfo, input_blocks: dict, callback
             blocknum,
             flash_info.crypto.encrypt(compressed_binary),
             boxcode,
-            0x1,
-            0x1,
+            getattr(flash_info, "dfi_encryption", 0x1),
+            getattr(flash_info, "dfi_compression", 0x1),
             should_erase,
             uds_checksum,
             block.block_name,
@@ -210,8 +210,8 @@ def encrypt_blocks(
             input_block.block_number,
             flash_info.crypto.encrypt(binary_data),
             input_block.boxcode,
-            0x1,  # Compression
-            0x1,  # Encryption
+            getattr(flash_info, "dfi_encryption", 0x1),  # Encryption
+            getattr(flash_info, "dfi_compression", 0x1),  # Compression
             should_erase,
             flash_info.block_checksums[input_block.block_number],
             input_block.block_name,

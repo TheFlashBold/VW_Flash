@@ -76,3 +76,7 @@ dsg_flash_info = FlashInfo(
 
 # Same SH-2A CBOOT as DQ381 — 2-phase erase requires retries
 dsg_flash_info.erase_retries = 5
+
+# RequestDownload DFI 0xAA (LZSS10 | AES) — the 0DL CBOOT does not use the DSG default 0x11
+dsg_flash_info.dfi_compression = 0xA
+dsg_flash_info.dfi_encryption = 0xA
