@@ -433,10 +433,10 @@ if extract_only and image_checksum and args.action in ("checksum", "prepare"):
 
 flash_utils = simos_flash_utils
 
-if args.dsg or args.dq200 or args.dq400 or args.dq500 or args.dq500_0dl:
+if args.dsg or args.dq200 or args.dq400 or args.dq500:
     flash_utils = dsg_flash_utils
 
-if args.dq381 or args.dl382:
+if args.dq381 or args.dl382 or args.dq500_0dl:
     flash_utils = dq381_flash_utils
 
 if args.eps:
