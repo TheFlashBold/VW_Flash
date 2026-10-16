@@ -1073,9 +1073,9 @@ class FlashPanel(wx.Panel):
     def prepare_file(self, selected_file, output_dir):
         should_patch_cboot = False
 
-        if module_selection_is_dq250(self.module_choice.GetSelection()) or module_selection_is_dq400(self.module_choice.GetSelection()) or module_selection_is_dq500(self.module_choice.GetSelection()) or module_selection_is_dq500_0dl(self.module_choice.GetSelection()):
+        if module_selection_is_dq250(self.module_choice.GetSelection()) or module_selection_is_dq400(self.module_choice.GetSelection()) or module_selection_is_dq500(self.module_choice.GetSelection()):
             flash_utils = dsg_flash_utils
-        elif module_selection_is_dq381(self.module_choice.GetSelection()):
+        elif module_selection_is_dq381(self.module_choice.GetSelection()) or module_selection_is_dq500_0dl(self.module_choice.GetSelection()):
             flash_utils = dq381_flash_utils
         elif module_selection_is_haldex(self.module_choice.GetSelection()):
             flash_utils = haldex_flash_utils
@@ -1118,9 +1118,9 @@ class FlashPanel(wx.Panel):
 
     def flash_bin(self, get_info=True, should_patch_cboot=False):
         (interface, interface_path) = split_interface_name(self.options["interface"])
-        if module_selection_is_dq250(self.module_choice.GetSelection()) or module_selection_is_dq400(self.module_choice.GetSelection()) or module_selection_is_dq500(self.module_choice.GetSelection()) or module_selection_is_dq500_0dl(self.module_choice.GetSelection()):
+        if module_selection_is_dq250(self.module_choice.GetSelection()) or module_selection_is_dq400(self.module_choice.GetSelection()) or module_selection_is_dq500(self.module_choice.GetSelection()):
             flash_utils = dsg_flash_utils
-        elif module_selection_is_dq381(self.module_choice.GetSelection()):
+        elif module_selection_is_dq381(self.module_choice.GetSelection()) or module_selection_is_dq500_0dl(self.module_choice.GetSelection()):
             flash_utils = dq381_flash_utils
         elif module_selection_is_haldex(self.module_choice.GetSelection()):
             flash_utils = haldex_flash_utils
