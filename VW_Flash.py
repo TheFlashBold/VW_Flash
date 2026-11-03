@@ -139,6 +139,11 @@ parser.add_argument("--dl382", help="Perform DL382 (0CK Conti/SH-2A) flash actio
 parser.add_argument("--dq400", help="Perform DQ400 DSG actions.", action="store_true")
 parser.add_argument("--dq500", help="Perform DQ500-0BH DSG actions.", action="store_true")
 parser.add_argument("--dq500_0dl", help="Perform DQ500-0DL DSG actions.", action="store_true")
+parser.add_argument(
+    "--allow_cboot",
+    help="Also flash guarded CBOOT blocks (DQ500-0DL). Unvalidated, can brick the module.",
+    action="store_true",
+)
 parser.add_argument("--dl501", help="DL501 0B5 S tronic, extract_frf only.", action="store_true")
 parser.add_argument("--vl381", help="VL381 0AW multitronic, extract_frf only.", action="store_true")
 parser.add_argument("--al450", help="ZF 8HP AL450 (2H0927158*, Amarok), extract_frf only.", action="store_true")
@@ -334,6 +339,9 @@ if args.dq500:
 
 if args.dq500_0dl:
     flash_info = dq500_0dl.dsg_flash_info
+    if args.allow_cboot:
+        logger.warning("--allow_cboot: CBOOT will be erased and flashed")
+        flash_info.guarded_blocks = set()
 
 if args.dl501:
     flash_info = dl501.dsg_flash_info

@@ -80,3 +80,7 @@ dsg_flash_info.erase_retries = 5
 # RequestDownload DFI 0xAA (LZSS10 | AES) — the 0DL CBOOT does not use the DSG default 0x11
 dsg_flash_info.dfi_compression = 0xA
 dsg_flash_info.dfi_encryption = 0xA
+
+# CBOOT has never been flashed on 0DL hardware and is the only unrecoverable
+# block. dq381_flash_utils skips guarded blocks unless --allow_cboot is given.
+dsg_flash_info.guarded_blocks = {1}

@@ -215,6 +215,35 @@ def flash_bin(
     interface_path: Optional[str] = None,
     stmin_override: Optional[int] = 900000,
 ):
+    guarded_blocks = getattr(flash_info, "guarded_blocks", set())
+    skipped = [
+        name
+        for name in input_blocks
+        if input_blocks[name].block_number in guarded_blocks
+    ]
+    if skipped:
+        for name in skipped:
+            status = (
+                "Skipping guarded block "
+                + str(input_blocks[name].block_number)
+                + " ("
+                + name
+                + "): CBOOT flashing is not validated for this module"
+            )
+            cliLogger.warning(status)
+            if callback:
+                callback(
+                    flasher_step="PREPARING",
+                    flasher_status=status,
+                    flasher_progress=0,
+                )
+        input_blocks = {
+            name: block for name, block in input_blocks.items() if name not in skipped
+        }
+    if not input_blocks:
+        cliLogger.critical("No blocks left to flash after skipping guarded blocks")
+        return
+
     asw_data = bytearray()
     cal_id = b"NONE"
 
